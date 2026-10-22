@@ -9,7 +9,7 @@ contradictions and poisoning, enforces access and risky-action rules in code, an
 with a signed hash chain. It ships with an evaluation suite comparing five versions, from plain RAG memory to the full system.
 
 - Design: [`docs/AEGIS2026_MemLedger.pdf`](docs/AEGIS2026_MemLedger.pdf)
-- Plan: [`docs/TEAM_PLAN.md`](docs/TEAM_PLAN.md) · Interfaces: [`docs/interfaces.md`](docs/interfaces.md)
+- Plan: [`docs/TEAM_PLAN.md`](docs/TEAM_PLAN.md) · Prompts per member: [`docs/prompts/`](docs/prompts/) · Interfaces: [`docs/interfaces.md`](docs/interfaces.md)
 
 ## Quick start
 ```bash

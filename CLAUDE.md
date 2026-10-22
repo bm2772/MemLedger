@@ -28,3 +28,5 @@ If you need a change outside your area, open an issue or ask the owner; do not e
 - Tests first; `make test` and `make lint` must pass before every commit. Use MockMemoryService to work in parallel.
 - Never commit secrets, .env, keys, model weights or datasets (download scripts only). Models run via vLLM/Ollama/HF.
 - Branch `m<N>/<task>`, small PRs, 1 review from another member. Pull before each session.
+
+Per-member prompts: docs/prompts/M<N>_*.md — paste the prompt for the current day.
