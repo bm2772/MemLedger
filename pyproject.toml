@@ -1,12 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "memledger"
 version = "0.1.0"
 description = "Provenance-governed memory for long-running AI agents (AEGIS 2026, team Prompt Stars)"
 requires-python = ">=3.11"
-dependencies = ["pydantic>=2", "cryptography>=42", "chromadb>=0.5", "numpy"]
+dependencies = ["pydantic>=2", "cryptography>=42", "numpy"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.5"]
+store = ["chromadb>=0.5"]
 models = ["transformers>=4.44", "torch", "sentence-transformers", "vllm"]
 demo = ["streamlit"]
 
@@ -15,3 +20,6 @@ line-length = 110
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+include = ["memledger*"]
