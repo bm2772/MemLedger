@@ -12,6 +12,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey,
 from memledger.core.interfaces import Check
 from memledger.core.merkle import merkle_proof, merkle_root, verify_proof
 from memledger.core.mock import PRIORS
+from memledger.core.trust import TrustEngine
 from memledger.core.types import (
     Claim,
     Derivation,
@@ -25,6 +26,7 @@ from memledger.core.types import (
     WriteResult,
     now,
 )
+from memledger.retrieval.retriever import Retriever
 from memledger.store.index import InMemoryIndex, VectorIndex
 from memledger.store.sqlite import SQLiteStore
 
@@ -53,6 +55,7 @@ class LedgerService:
         self.checks = checks or []
         self.signing_key = signing_key or Ed25519PrivateKey.generate()
         self.public_key = public_key or self.signing_key.public_key()
+        self.trust = TrustEngine(self.store)
 
     # ---- writes
     def ingest(self, content: str, kind: SourceKind, session: Session) -> Source:
@@ -69,15 +72,34 @@ class LedgerService:
         if any(not v.ok for v in verdicts):
             return WriteResult(False, [], verdicts)
         score = min((v.score for v in verdicts), default=1.0)
+        team = proposal.session.team
+        key = proposal.text.strip().lower()
+        existing = next((c for c in self.store.list_claims(team=team)
+                         if c.status != Status.QUARANTINED and c.text.strip().lower() == key), None)
+        if existing is not None:  # same fact again: one more justification, not a new claim
+            self.store.add_derivation(self._derivation(existing.id, proposal, score))
+            self.trust.recompute([existing.id])
+            self._anchor()
+            return WriteResult(True, [existing.id], verdicts)
         claim = self._make_claim(proposal, score)
         self.store.add_claim(claim)
-        self.store.add_derivation(Derivation(
-            _new_id("d_"), claim.id, list(proposal.context_ids),
-            {cid: score for cid in proposal.context_ids}, agent_id=proposal.agent_id,
-        ))
+        self.store.add_derivation(self._derivation(claim.id, proposal, score))
+        self.store.set_status(claim.id, Status.ACTIVE.value, "jtms: initial trust",
+                              self.trust.claim_trust(claim.id) or 0.0)
         self.index.add(claim.labels.team, claim.id, claim.text)
         self._anchor()
         return WriteResult(True, [claim.id], verdicts)
+
+    def _derivation(self, claim_id: str, p: WriteProposal, score: float) -> Derivation:
+        return Derivation(_new_id("d_"), claim_id, list(p.context_ids),
+                          {cid: score for cid in p.context_ids}, agent_id=p.agent_id)
+
+    def add_triple(self, claim_id: str, subject: str, property: str, value: str) -> None:
+        self.store.add_triple(claim_id, subject, property, value)
+
+    def record_contradiction(self, claim_a: str, claim_b: str, is_update: bool = False) -> None:
+        self.trust.contest(claim_a, claim_b, is_update)
+        self._anchor()
 
     def _parent(self, pid: str) -> tuple[float, str] | None:
         if (s := self.store.get_source(pid)) is not None:
@@ -117,7 +139,8 @@ class LedgerService:
     def _item_ok(self, claim: Claim, seen: set[str]) -> bool:
         """Recompute the claim's hash (and its parents', recursively) from stored content."""
         seen.add(claim.id)
-        parent_ids = [p for d in self.store.derivations_for(claim.id) for p in d.exposed_to]
+        first = self.store.derivations_for(claim.id)[:1]  # hash is based on the first derivation only
+        parent_ids = [p for d in first for p in d.exposed_to]
         hashes = []
         for pid in dict.fromkeys(parent_ids):
             if (s := self.store.get_source(pid)) is not None:
@@ -153,29 +176,17 @@ class LedgerService:
 
     # ---- reads
     def retrieve(self, query: str, session: Session, k: int = 8) -> list[RetrievedMemory]:
-        teams = [session.team, "shared"]
         out = []
-        for cid, score in self.index.query(teams, query, k * 3):
-            claim = self.store.get_claim(cid)
-            if claim is None or claim.labels.team not in teams or claim.status == Status.QUARANTINED:
-                continue
-            if not self.verify_claim(cid):
-                continue
-            exposed = [p for d in self.store.derivations_for(cid) for p in d.exposed_to]
-            out.append(RetrievedMemory(claim, exposed, score))
+        for m in Retriever(self.store, self.index).search(query, session, k * 2):
+            if self.verify_claim(m.claim.id):
+                out.append(m)
         return out[:k]
 
     def flag_source(self, source_id: str, reason: str) -> dict[str, list[str]]:
         self.store.flag_source(source_id, reason)
-        # TODO Day 3: JTMS recompute (slide 7)
-        quarantined = []
-        for c in self.store.list_claims():
-            ders = self.store.derivations_for(c.id)
-            if c.status != Status.QUARANTINED and ders and all(source_id in d.exposed_to for d in ders):
-                self.store.set_status(c.id, Status.QUARANTINED.value, f"source {source_id} flagged: {reason}")
-                quarantined.append(c.id)
+        res = self.trust.recompute()
         self._anchor()
-        return {"quarantined": quarantined, "restored": []}
+        return {"quarantined": res["quarantined"], "restored": res["restored"]}
 
     def explain(self, claim_id: str) -> dict:
         return self._explain(claim_id, set())

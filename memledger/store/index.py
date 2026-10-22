@@ -27,21 +27,31 @@ def _cosine(a: Counter, b: Counter) -> float:
     return dot / (na * nb) if na and nb else 0.0
 
 
-class InMemoryIndex:
-    """Word-count cosine similarity, one dict per team."""
+def _dot(a: list[float], b: list[float]) -> float:
+    """Cosine for unit vectors; normalizes anyway so any embedder works."""
+    na, nb = math.sqrt(sum(x * x for x in a)), math.sqrt(sum(x * x for x in b))
+    return sum(x * y for x, y in zip(a, b, strict=True)) / (na * nb) if na and nb else 0.0
 
-    def __init__(self) -> None:
-        self._teams: dict[str, dict[str, Counter]] = {}
+
+class InMemoryIndex:
+    """Word-count cosine similarity (or cosine of embeddings if `embed` is given), one dict per team."""
+
+    def __init__(self, embed: Callable[[list[str]], list[list[float]]] | None = None) -> None:
+        self._teams: dict[str, dict[str, Counter | list[float]]] = {}
+        self._embed = embed
+
+    def _rep(self, text: str):
+        return self._embed([text])[0] if self._embed else _bag(text)
 
     def add(self, team: str, item_id: str, text: str) -> None:
-        self._teams.setdefault(team, {})[item_id] = _bag(text)
+        self._teams.setdefault(team, {})[item_id] = self._rep(text)
 
     def query(self, teams: list[str], text: str, k: int = 8) -> list[tuple[str, float]]:
-        q = _bag(text)
+        q = self._rep(text)
         hits = []
         for t in dict.fromkeys(teams):
-            for item_id, bag in self._teams.get(t, {}).items():
-                score = _cosine(q, bag)
+            for item_id, rep in self._teams.get(t, {}).items():
+                score = _dot(q, rep) if self._embed else _cosine(q, rep)
                 if score > 0:
                     hits.append((item_id, score))
         return sorted(hits, key=lambda h: -h[1])[:k]

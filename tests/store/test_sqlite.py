@@ -82,8 +82,9 @@ def test_append_only(st, table):
     st.add_claim(mk_claim())
     st.add_derivation(Derivation("d1", "c1", ["s1"], {}, created_at=T0))
     st.append_hash_log("r", b"sig", 1)
+    st.add_triple("c1", "x", "p", "v")
     col = {"sources": "kind", "claims": "text", "derivations": "model", "edges": "type",
-           "status_log": "reason", "hash_log": "root"}[table]
+           "status_log": "reason", "hash_log": "root", "triples": "value"}[table]
     with pytest.raises(sqlite3.DatabaseError, match="append-only"):
         st.conn.execute(f"UPDATE {table} SET {col}={col}")
     with pytest.raises(sqlite3.DatabaseError, match="append-only"):
@@ -106,3 +107,25 @@ def test_list_claims_filter(st):
     assert len(st.list_claims()) == 3
     assert [c.id for c in st.list_claims(team="a")] == ["c1"]
     assert {c.id for c in st.list_claims(teams=["a", "shared"])} == {"c1", "c3"}
+
+
+def test_keyword_search_bm25_team_scope_and_sanitizing(st):
+    for cid, team, text in [("c1", "a", "the server restarts nightly"), ("c2", "a", "dogs bark"),
+                            ("c3", "b", "server restarts hourly")]:
+        c = mk_claim(cid, team)
+        c.text = text
+        st.add_claim(c)
+    hits = st.keyword_search(["a"], "restart server!! (now)", 5)
+    assert [i for i, _ in hits] == ["c1"] and hits[0][1] > 0
+    assert {i for i, _ in st.keyword_search(["a", "b"], "server", 5)} == {"c1", "c3"}
+    assert st.keyword_search(["a"], "?!  ", 5) == []
+    assert st.keyword_search(["a"], 'x" OR NEAR(', 5) == []
+
+
+def test_triples_lookup_case_insensitive(st):
+    st.add_triple("c1", "Project X", "budget", "5")
+    st.add_triple("c2", "project x", "owner", "bob")
+    assert st.lookup_triples("PROJECT x") == ["c1", "c2"]
+    assert st.lookup_triples("project x", "Owner") == ["c2"]
+    assert st.lookup_triples("project") == []
+    assert st.triple_subjects() == ["project x"]

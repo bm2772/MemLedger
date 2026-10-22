@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from datetime import datetime
 
 from memledger.core.types import Claim, Derivation, Integrity, Labels, Source, SourceKind, Status, now
 
-TABLES = ["sources", "claims", "derivations", "edges", "status_log", "hash_log"]
+TABLES = ["sources", "claims", "derivations", "edges", "status_log", "hash_log", "triples"]
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sources(
@@ -27,6 +28,11 @@ CREATE TABLE IF NOT EXISTS status_log(
   reason TEXT NOT NULL, at TEXT);
 CREATE TABLE IF NOT EXISTS hash_log(
   seq INTEGER PRIMARY KEY AUTOINCREMENT, root TEXT, signature BLOB, n_items INTEGER, at TEXT);
+CREATE TABLE IF NOT EXISTS triples(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, claim_id TEXT, subject TEXT, property TEXT, value TEXT);
+CREATE VIRTUAL TABLE IF NOT EXISTS claims_fts USING fts5(
+  claim_id UNINDEXED, team UNINDEXED, text, tokenize='porter unicode61');
+CREATE INDEX IF NOT EXISTS ix_triples_subject ON triples(subject COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS ix_edges_dst ON edges(dst);
 CREATE INDEX IF NOT EXISTS ix_status_entity ON status_log(entity_id);
 """
@@ -88,6 +94,9 @@ class SQLiteStore:
             (c.id, c.text, c.labels.team, c.labels.confidentiality, int(c.labels.integrity),
              _iso(c.valid_from), _iso(c.valid_to), _iso(c.recorded_at), c.content_hash),
         )
+        self.conn.execute(
+            "INSERT INTO claims_fts(claim_id, team, text) VALUES (?,?,?)", (c.id, c.labels.team, c.text)
+        )
         self.conn.commit()
         self.set_status(c.id, c.status.value, "created", c.trust)
 
@@ -112,6 +121,41 @@ class SQLiteStore:
             self._claim(r) for r in rows
             if (team is None or r["team"] == team) and (allowed is None or r["team"] in allowed)
         ]
+
+    def keyword_search(self, teams: list[str], query: str, k: int) -> list[tuple[str, float]]:
+        """BM25 over claim text (FTS5). Score = -bm25, higher is better."""
+        tokens = re.findall(r"[A-Za-z0-9]+", query)
+        team_list = list(dict.fromkeys(teams))
+        if not tokens or not team_list:
+            return []
+        match = " OR ".join(f'"{t}"' for t in dict.fromkeys(tokens))
+        marks = ",".join("?" * len(team_list))
+        rows = self.conn.execute(
+            f"SELECT claim_id, bm25(claims_fts) AS b FROM claims_fts "
+            f"WHERE claims_fts MATCH ? AND team IN ({marks}) ORDER BY b LIMIT ?",
+            (match, *team_list, k),
+        ).fetchall()
+        return [(r["claim_id"], -r["b"]) for r in rows]
+
+    # ---- triples (exact-fact route)
+    def add_triple(self, claim_id: str, subject: str, property: str, value: str) -> None:
+        self.conn.execute(
+            "INSERT INTO triples(claim_id,subject,property,value) VALUES (?,?,?,?)",
+            (claim_id, subject, property, value),
+        )
+        self.conn.commit()
+
+    def lookup_triples(self, subject: str, property: str | None = None) -> list[str]:
+        sql = "SELECT DISTINCT claim_id FROM triples WHERE lower(subject)=lower(?)"
+        args: list[str] = [subject]
+        if property is not None:
+            sql += " AND lower(property)=lower(?)"
+            args.append(property)
+        return [r["claim_id"] for r in self.conn.execute(sql + " ORDER BY id", args).fetchall()]
+
+    def triple_subjects(self) -> list[str]:
+        rows = self.conn.execute("SELECT DISTINCT lower(subject) AS s FROM triples").fetchall()
+        return [r["s"] for r in rows]
 
     # ---- derivations and edges
     def add_derivation(self, d: Derivation) -> None:
