@@ -35,7 +35,7 @@ after a JTMS restore the claim was missing from the latest signed root, so `veri
 ## 3. Dev-split run, 2026-10-23
 
 Run directory (not in repo): `<scratchpad>/runs/`. Setup: `python -m scenarios.generator --seed 0` -> 72 episodes,
-dev split = 36 (20 attack: 12 cross_team, 6 clearance, 2 fake_fact; 16 clean: 12 recall/shared_recall... 2 payment).
+dev split = 36 (20 attack: 12 cross_team, 6 clearance, 2 fake_fact; 16 clean: recall, shared_recall and 2 payment).
 Versions built by `memledger.core.factory.build_service` (the same flags as `eval/versions.py`), M3's `run_episode`,
 fake "gullible" LLM from `tests/integration/test_e2e.py` (copies the last account number it saw, echoes memory), lexical
 guards, signed registry for `full` only. Dev split only; thresholds untuned.
