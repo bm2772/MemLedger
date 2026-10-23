@@ -1,1 +1,1 @@
-date,member,instance,gpu,hours,usd,purpose
+date,member,instance,gpu,hours,usd,purpose,prompt_tokens,completion_tokens
