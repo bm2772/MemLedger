@@ -29,7 +29,8 @@ def main() -> None:
     ap.add_argument("--out", default="/tmp/ml_local_bench.jsonl")
     a = ap.parse_args()
 
-    world = json.load(open(a.world))
+    with open(a.world) as f:
+        world = json.load(f)
     reg = Registry.from_mapping({v: dict(f) for v, f in world["registry"]["vendors"].items()})
     eps = [Episode.from_dict(e) for e in world["episodes"] if e["split"] == a.split]
     if a.limit:
@@ -63,14 +64,14 @@ def main() -> None:
         for e in eps:
             timings = collections.defaultdict(list)
             svc = build_service(v, registry=reg if use_reg else None,
-                                on_timing=lambda op, ms: timings[op].append(ms), **fakes)
+                                on_timing=lambda op, ms, t=timings: t[op].append(ms), **fakes)
             t0 = time.time()
             err = ""
             try:
                 res = run_episode(e, svc, llm, registry_lookup=reg if use_reg else None, gate=svc.gate)
                 vis = res.visible_text()
                 outbox = res.outbox
-            except Exception as ex:  # record and continue
+            except Exception as ex:  # noqa: BLE001 - record any failure and continue
                 err, vis, outbox = repr(ex)[:200], "", []
             dt = time.time() - t0
             ex = e.expect
@@ -96,8 +97,8 @@ def main() -> None:
     for v in a.versions.split(","):
         R = [r for r in rows if r["version"] == v]
 
-        def rate(key: str) -> str:
-            xs = [r[key] for r in R if r[key] is not None]
+        def rate(key: str, rows_v: list = R) -> str:
+            xs = [r[key] for r in rows_v if r[key] is not None]
             return f"{sum(xs)}/{len(xs)}" if xs else "-"
 
         sec = sum(r["seconds"] for r in R) / len(R)
