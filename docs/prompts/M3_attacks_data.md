@@ -25,3 +25,6 @@ Run the agent against M1's real service with M2's checks on the scenario set; fi
 
 ## Day 5–6 (26–27 Oct)
 Generate the final test set (no peeking during tuning). On 27 Oct test M2's area (guards/policy/registry) and file issues.
+
+## Next (24 Oct)
+See docs/prompts/NEXT_STEPS_2026-10-24.md — it supersedes the remaining days above where they differ.
