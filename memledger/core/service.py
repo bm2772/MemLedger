@@ -255,6 +255,19 @@ class LedgerService:
         self._anchor()
         return {"quarantined": res["quarantined"], "restored": res["restored"]}
 
+    def add_justification(self, claim_id: str, context_ids: list[str], score: float = 1.0,
+                          agent_id: str = "") -> dict[str, list[str]]:
+        """New evidence for an existing claim (slide 7): record the derivation, recompute trust, re-anchor.
+
+        Re-anchoring matters: a claim the JTMS restores must be in the latest signed root again, otherwise
+        verify_claim would (correctly) refuse it as missing from the log and quarantine it for integrity.
+        """
+        self.store.add_derivation(Derivation(_new_id("d_"), claim_id, list(context_ids),
+                                             {cid: score for cid in context_ids}, agent_id=agent_id))
+        res = self.trust.recompute()
+        self._anchor()
+        return res
+
     def explain(self, claim_id: str) -> dict:
         return self._explain(claim_id, set())
 

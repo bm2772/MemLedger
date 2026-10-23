@@ -178,3 +178,16 @@ def test_bad_signature_fails(svc):
     cid = write(svc, "fact", [s.id])
     svc.public_key = Ed25519PrivateKey.generate().public_key()
     assert svc.verify_claim(cid) is False
+
+
+def test_restored_claim_is_reanchored_and_retrievable(svc):
+    """A claim the JTMS restores must be back in the latest signed root (else verify quarantines it for integrity)."""
+    bad = svc.ingest("shared fact", SourceKind.WEB, ALICE)
+    good = svc.ingest("shared fact", SourceKind.PAPER, ALICE)
+    cid = write(svc, "shared fact", [bad.id])
+    svc.flag_source(bad.id, "retracted")
+    assert svc.retrieve("shared fact", ALICE) == []
+    res = svc.add_justification(cid, [good.id], 0.9, "ag")
+    assert res["restored"] == [cid]
+    assert [m.claim.id for m in svc.retrieve("shared fact", ALICE)] == [cid]
+    assert svc.store.get_claim(cid).status.value == "restored"
