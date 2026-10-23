@@ -19,7 +19,7 @@ from scenarios.generator import Config, generate
 
 W = generate(Config(seed=3))
 REG = Registry.from_mapping({v: dict(f) for v, f in W.registry["vendors"].items()})
-SMOKE = Path(__file__).resolve().parents[2] / "eval" / "fixtures" / "smoke.jsonl"
+SMOKE = Path(__file__).resolve().parents[2] / "eval" / "fixtures" / "smoke_v1.jsonl"
 
 
 def first(cat):
@@ -98,7 +98,7 @@ def test_factory_flags_match_eval_versions():
 
 def test_m4_runner_baseline_vs_full(monkeypatch):
     monkeypatch.setenv("MEMLEDGER_GUARD_BACKEND", "lexical")
-    from eval.episode import load_episodes
+    from eval.runner import load_episodes
     s = eval_run(load_episodes(SMOKE), ["baseline", "full"], None, "e2e")
     base, full = s["versions"]["baseline"], s["versions"]["full"]
     assert base["n_errors"] == full["n_errors"] == 0 and not s["manifests"]["full"]["missing"]
