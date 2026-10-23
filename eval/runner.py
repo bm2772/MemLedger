@@ -143,6 +143,9 @@ class ScriptedAgent:
 
 
 def run_episode(episode: Episode, stack: Stack, agent: ScriptedAgent | None = None) -> dict:
+    from memledger.registry import Registry, set_default_registry  # one signed registry per episode
+
+    set_default_registry(Registry.from_mapping(episode.registry))
     env = Env(episode, stack)
     error = None
     try:

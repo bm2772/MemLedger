@@ -118,6 +118,7 @@ def build_stack(version: str | Version, components: dict | None = None, strict: 
     if v.registry and v.write_checks and (c := get("registry_check", comps["registry_check"])) is not None:
         checks.append(c)
 
+    access = get("access_control", comps["access_control"]) if v.access_control else None
     service = None
     if v.provenance:
         try:
@@ -127,8 +128,11 @@ def build_stack(version: str | Version, components: dict | None = None, strict: 
                 raise MissingComponent(f"{v.name}: service unavailable: {e}") from e
             missing.append("service")
         else:
-            accepts_checks = "checks" in inspect.signature(cls).parameters
-            service = cls(checks=checks) if accepts_checks else cls()
+            params = inspect.signature(cls).parameters
+            kw = {"checks": checks} if "checks" in params else {}
+            if access is not None and "access" in params:
+                kw["access"] = access  # read filter (step 6); also joins the write checks
+            service = cls(**kw)
             active.append("service")
     if service is None:
         service = _instance(_load(comps["baseline_service"]))
@@ -136,8 +140,9 @@ def build_stack(version: str | Version, components: dict | None = None, strict: 
     screen = get("input_screen", comps["input_screen"]) if v.input_screen else None
     gate = get("action_gate", comps["action_gate"]) if v.action_gate else None
     binder = get("registry_binder", comps["registry_binder"]) if v.registry and v.action_gate else None
-    if v.access_control:
-        get("access_control", comps["access_control"])  # enforced inside the service; recorded for the manifest
+    from memledger.guards import attach_all  # checks, gate and access control get the service they query
+
+    attach_all([*checks, gate, access], service)
 
     manifest = {"version": v.name, "service": type(service).__name__, "checks": [type(c).__name__ for c in checks],
                 "active": active, "missing": missing, "degraded": bool(missing)}

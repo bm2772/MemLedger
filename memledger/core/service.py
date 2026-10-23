@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import hashlib
+import time
 import uuid
+from collections.abc import Callable
 from datetime import datetime
+from typing import Any
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
-from memledger.core.interfaces import Check
+from memledger.core.interfaces import ActionGate, Check, InputScreen
 from memledger.core.merkle import merkle_proof, merkle_root, verify_proof
 from memledger.core.mock import PRIORS
 from memledger.core.trust import TrustEngine
@@ -22,6 +25,7 @@ from memledger.core.types import (
     Source,
     SourceKind,
     Status,
+    Verdict,
     WriteProposal,
     WriteResult,
     now,
@@ -49,24 +53,66 @@ class LedgerService:
         checks: list[Check] | None = None,
         signing_key: Ed25519PrivateKey | None = None,
         public_key: Ed25519PublicKey | None = None,
+        input_screen: InputScreen | None = None,
+        screen_threshold: float = 0.5,
+        access: Any | None = None,
+        gate: ActionGate | None = None,
+        on_timing: Callable[[str, float], None] | None = None,
+        version: str = "",
     ) -> None:
         self.store = store or SQLiteStore()
         self.index = index or InMemoryIndex()
-        self.checks = checks or []
+        self.checks = list(checks or [])
+        self.access = access  # policy.access.AccessControl: read filter (slide 15 step 6) and a write-path check
+        if access is not None and access not in self.checks:
+            self.checks.append(access)
+        self.input_screen = input_screen
+        self.screen_threshold = screen_threshold
+        self.gate = gate
+        self.on_timing = on_timing
+        self.version = version
+        self.timings: list[dict] = []  # {"op": ingest|write|read|gate, "ms": float, "version": str}
         self.signing_key = signing_key or Ed25519PrivateKey.generate()
         self.public_key = public_key or self.signing_key.public_key()
         self.trust = TrustEngine(self.store)
 
+    # ---- timing (M4 "added delay": wall time of each service call, in ms)
+    def _timed(self, op: str, t0: float) -> None:
+        ms = (time.perf_counter() - t0) * 1000
+        self.timings.append({"op": op, "ms": ms, "version": self.version})
+        if self.on_timing is not None:
+            self.on_timing(op, ms)
+
     # ---- writes
     def ingest(self, content: str, kind: SourceKind, session: Session) -> Source:
+        t0 = time.perf_counter()
+        try:
+            return self._ingest(content, kind, session)
+        finally:
+            self._timed("ingest", t0)
+
+    def _ingest(self, content: str, kind: SourceKind, session: Session) -> Source:
         t = now()
-        src = Source(_new_id("s_"), kind, content, Labels(session.team), PRIORS[kind],
+        # confidentiality = clearance of the session that brought it in (the access filter keys off it, slide 15 step 6)
+        src = Source(_new_id("s_"), kind, content, Labels(session.team, session.clearance), PRIORS[kind],
                      item_hash(content, t, []), t)
         self.store.add_source(src)
+        if self.input_screen is not None:  # step 1: a high score means the source never supports anything
+            score = float(self.input_screen.score(content))
+            if score >= self.screen_threshold:
+                self.store.flag_source(src.id, f"input screen: score={score:.2f} >= {self.screen_threshold:.2f}")
+                src = self.store.get_source(src.id) or src
         self._anchor()
         return src
 
     def propose_write(self, proposal: WriteProposal) -> WriteResult:
+        t0 = time.perf_counter()
+        try:
+            return self._propose_write(proposal)
+        finally:
+            self._timed("write", t0)
+
+    def _propose_write(self, proposal: WriteProposal) -> WriteResult:
         sources = [s for i in proposal.context_ids if (s := self.store.get_source(i)) is not None]
         verdicts = [c.check(proposal, sources) for c in self.checks]
         if any(not v.ok for v in verdicts):
@@ -87,6 +133,9 @@ class LedgerService:
         self.store.set_status(claim.id, Status.ACTIVE.value, "jtms: initial trust",
                               self.trust.claim_trust(claim.id) or 0.0)
         self.index.add(claim.labels.team, claim.id, claim.text)
+        for c in self.checks:  # step 4: conflicts the contradiction check found are recorded as edges
+            for conflict in getattr(c, "last_conflicts", []):
+                self.record_contradiction(claim.id, conflict.claim_id, conflict.is_update)
         self._anchor()
         return WriteResult(True, [claim.id], verdicts)
 
@@ -112,7 +161,9 @@ class LedgerService:
         parents = [x for pid in p.context_ids if (x := self._parent(pid)) is not None]
         base = min((t for t, _ in parents), default=PRIORS[SourceKind.AGENT])
         t = now()
-        return Claim(_new_id("c_"), p.text, Labels(p.session.team), trust=score * base,
+        conf = max((x.labels.confidentiality for pid in p.context_ids
+                    if (x := self.store.get_source(pid) or self.store.get_claim(pid)) is not None), default=0)
+        return Claim(_new_id("c_"), p.text, Labels(p.session.team, conf), trust=score * base,
                      valid_from=t, valid_to=None, recorded_at=t,
                      content_hash=item_hash(p.text, t, [h for _, h in parents]))
 
@@ -176,11 +227,27 @@ class LedgerService:
 
     # ---- reads
     def retrieve(self, query: str, session: Session, k: int = 8) -> list[RetrievedMemory]:
-        out = []
-        for m in Retriever(self.store, self.index).search(query, session, k * 2):
-            if self.verify_claim(m.claim.id):
-                out.append(m)
-        return out[:k]
+        t0 = time.perf_counter()
+        try:
+            out = []
+            for m in Retriever(self.store, self.index).search(query, session, k * 2):
+                if self.verify_claim(m.claim.id):
+                    out.append(m)
+            if self.access is not None:  # step 6: read filter, identity from the Session only
+                out = self.access.filter(session, out)
+            return out[:k]
+        finally:
+            self._timed("read", t0)
+
+    def authorize(self, tool: str, params: dict, context_claim_ids: list[str], session: Session) -> Verdict:
+        """Step 8 passthrough to the ActionGate; without a gate every call is allowed (baseline)."""
+        if self.gate is None:
+            return Verdict(True, 1.0, "no gate", "action_gate")
+        t0 = time.perf_counter()
+        try:
+            return self.gate.allow(tool, params, context_claim_ids, session)
+        finally:
+            self._timed("gate", t0)
 
     def flag_source(self, source_id: str, reason: str) -> dict[str, list[str]]:
         self.store.flag_source(source_id, reason)
