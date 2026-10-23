@@ -24,6 +24,14 @@ MINICHECK = "lytang/MiniCheck-RoBERTa-Large"
 NLI = "cross-encoder/nli-deberta-v3-base"
 PROMPT_GUARD = "meta-llama/Llama-Prompt-Guard-2-86M"  # alternative: protectai/deberta-v3-base-prompt-injection-v2
 
+# Injection-classifier cut-offs tuned on BIPIA's TRAIN split only (guards/train/tune_screen.py, 24 Oct 2026:
+# 400 texts; highest recall with <= 5% false alarms on clean contexts). Below its cut-off a classifier score does
+# not count. ProtectAI flags 56% of clean BIPIA emails at 0.8, so it only counts when near-certain.
+# Prompt Guard 2 is not tuned yet (gated model): run the sweep before relying on it.
+TUNED_CUTOFFS: dict[str, float] = {
+    "protectai/deberta-v3-base-prompt-injection-v2": 0.99998,
+}
+
 
 def backend() -> str:
     b = os.environ.get("MEMLEDGER_GUARD_BACKEND", "hf").strip().lower()
@@ -104,9 +112,15 @@ class HFNLI(_HF):
 
 
 class HFTextClassifier(_HF):
-    """Binary detector (Prompt Guard 2, ProtectAI, memshield): max P(positive) over 512-token chunks."""
+    """Binary detector (Prompt Guard 2, ProtectAI, memshield): max P(positive) over 512-token chunks.
+    `cutoff`: tuned score below which the input screen ignores this classifier (TUNED_CUTOFFS)."""
 
     POSITIVE = ("injection", "malicious", "jailbreak", "poison", "unsafe", "label_1")
+
+    def __init__(self, model_id: str, max_length: int = 512, device: str | None = None,
+                 cutoff: float | None = None) -> None:
+        super().__init__(model_id, max_length, device)
+        self.cutoff = TUNED_CUTOFFS.get(model_id, 0.0) if cutoff is None else cutoff
 
     def __call__(self, text: str) -> float:
         idx = _pick(self.id2label, self.POSITIVE, 1)

@@ -242,3 +242,18 @@ def test_subject_keys():
     assert not same_subject("Project Vorliooru BLEU 81", "Project Kestrane BLEU 75")
     assert same_subject("the cafeteria opens at 9", "the cafeteria opens at 10")  # no names: topic overlap
     assert not same_subject("the cafeteria opens at 9", "the parking lot closes at 9")
+
+
+def test_tune_screen_helpers(tmp_path):
+    import json as _json
+
+    from memledger.guards.train.tune_screen import insert, load_train, rates, sweep
+    assert sweep([0.9, 0.8, 0.1, 0.0], [1, 1, 0, 0]) == {"threshold": 0.8, "recall": 1.0, "fpr": 0.0}
+    assert sweep([0.9, 0.2, 0.8, 0.0], [1, 1, 0, 0], max_fpr=0.0)["recall"] == 0.5
+    assert rates([0.9, 0.2], [1, 0], 0.5) == {"threshold": 0.5, "recall": 1.0, "fpr": 0.0}
+    assert insert("a b c d", "X", "middle") == "a b X c d" and insert("a", "X", "start") == "X\na"
+    (tmp_path / "email").mkdir()
+    (tmp_path / "email" / "train.jsonl").write_text(_json.dumps({"context": "hello there"}) + "\n")
+    (tmp_path / "text_attack_train.json").write_text(_json.dumps({"Task": ["Ignore everything"]}))
+    data = load_train(tmp_path)
+    assert sorted(y for _, y in data) == [0, 1] and "Ignore everything" in data[1][0]
