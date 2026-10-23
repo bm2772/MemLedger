@@ -20,6 +20,7 @@ line-length = 110
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]  # top-level bench/ attacks/ scenarios/ eval/ are importable in tests
 
 [tool.setuptools.packages.find]
 include = ["memledger*"]
