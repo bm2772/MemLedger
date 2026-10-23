@@ -143,11 +143,12 @@ def test_injected_nli_both_directions():
 
     def nli(a, b):
         calls.append((a, b))
-        return {"contradiction": 0.8 if a.startswith("new") else 0.1}
+        return {"contradiction": 0.95 if a.endswith("6") else 0.1, "entailment": 0.0}
 
-    c = ContradictionCheck(nli=nli, neighbours=lambda q, s, k: [claim("c1", "old fact", 0.9)])
-    assert not c.check(prop("new fact"), [src("x")]).ok
-    assert ("old fact", "new fact") in calls and ("new fact", "old fact") in calls
+    old, new = "Project Kestrane scored 5", "Project Kestrane scored 6"
+    c = ContradictionCheck(nli=nli, neighbours=lambda q, s, k: [claim("c1", old, 0.9)])
+    assert not c.check(prop(new), [src("x")]).ok
+    assert (old, new) in calls and (new, old) in calls
 
 
 # ---- memshield -----------------------------------------------------------------------------------------------
@@ -185,3 +186,59 @@ def test_train_helpers():
     assert [to_binary(v) for v in [True, 0, "poisoned", "clean", "1"]] == [1, 0, 1, 0, 1]
     m = binary_metrics([1, 1, 0, 0], [1, 0, 1, 0])
     assert m["precision"] == m["recall"] == m["f1"] == m["accuracy"] == 0.5
+
+
+# ---- issue 1 (docs/testing/local_run_2026-10-23.md): NLI says 1.00 for template-similar facts -------------------
+def deberta_like(a, b):
+    """What the real cross-encoder returned for every pair in the report: P(contradiction) = 1.00."""
+    return {"contradiction": 1.0, "neutral": 0.0, "entailment": 0.0}
+
+
+def test_report_pair_different_projects_is_no_conflict():
+    old = claim("c1", "Project Vorliooru measured a BLEU of 81.402 on Saltmarsh", 0.9)
+    c = ContradictionCheck(nli=deberta_like, neighbours=lambda q, s, k: [old])
+    v = c.check(prop("Project Kestrane measured a BLEU of 75.210 on Saltmarsh"), [src("x", prior=0.9)])
+    assert v.ok and v.reason == "no contradiction" and c.last_conflicts == []
+
+
+def test_report_pair_same_project_different_value_is_conflict():
+    old = claim("c1", "Project Vorliooru measured a BLEU of 81.402 on Saltmarsh", 0.9)
+    c = ContradictionCheck(nli=deberta_like, neighbours=lambda q, s, k: [old])
+    v = c.check(prop("Project Vorliooru measured a BLEU of 64.000 on Saltmarsh"), [src("x", prior=0.3)])
+    assert not v.ok and "c1" in v.reason
+
+
+@pytest.mark.parametrize("valid_to,expect_update", [(None, False), (now() - timedelta(days=1), True)])
+def test_report_pair_changed_bank_account_is_conflict_or_update(valid_to, expect_update):
+    old = claim("c1", "Acme Ltd's bank account is 56564275", 0.9, valid_to=valid_to)
+    c = ContradictionCheck(nli=deberta_like, neighbours=lambda q, s, k: [old])
+    c.check(prop("Acme Ltd's bank account has changed to 58974948"), [src("x")])
+    assert [(x.claim_id, x.is_update) for x in c.last_conflicts] == [("c1", expect_update)]
+
+
+def test_threshold_and_margin():
+    old = claim("c1", "Project Kestrane scored 5", 0.9)
+
+    def nli(p, e):
+        return lambda a, b: {"contradiction": p, "entailment": e}
+
+    def conflicts(p, e):
+        return ContradictionCheck(nli=nli(p, e), neighbours=lambda q, s, k: [old]).conflicts(
+            prop("Project Kestrane scored 6"))
+    assert conflicts(0.95, 0.0)
+    assert not conflicts(0.85, 0.0)  # below 0.9
+    assert not conflicts(0.95, 0.6)  # margin over entailment < 0.5
+
+
+def test_subject_keys():
+    from memledger.guards.text import proper_nouns, same_subject, subject_key
+    assert subject_key("Project Vorliooru measured a BLEU of 81.402 on Saltmarsh") == "project vorliooru"
+    assert subject_key("Note: Acme Ltd's bank account has changed to 9876") == "acme"
+    assert subject_key("Vendor master record: Acme Ltd bank account is 1234.") == "acme"
+    assert subject_key("Server A is down") == "server a" and subject_key("Ticket 42 is open") == "ticket 42"
+    assert subject_key("the cafeteria opens at 9") is None
+    assert proper_nouns("Note: Acme Ltd's account") == {"acme"}
+    assert same_subject("Acme Ltd account is 1", "Acme's account is 2")
+    assert not same_subject("Project Vorliooru BLEU 81", "Project Kestrane BLEU 75")
+    assert same_subject("the cafeteria opens at 9", "the cafeteria opens at 10")  # no names: topic overlap
+    assert not same_subject("the cafeteria opens at 9", "the parking lot closes at 9")

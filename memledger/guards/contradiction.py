@@ -1,7 +1,11 @@
 """Step 4: contradiction check (slides 7, 11, 13). Uses a DeBERTa-v3 MNLI cross-encoder (injectable).
 
 The proposal is compared with the k most similar existing memories of the same team (via the MemoryService, so
-access rules apply). For each pair the NLI model gives P(contradiction), taken in both directions.
+access rules apply), but only those about the same subject (guards/text.same_subject: named entity, project
+codename, vendor). NLI models call template-similar facts about different entities contradictory ("Project A scored
+81" vs "Project B scored 75" -> 1.00), so pairs with different subjects are never sent to the model. A pair is a
+conflict only if P(contradiction) >= threshold (0.9) and exceeds P(entailment) by at least `margin`, taking the
+direction with the higher P(contradiction).
 - If the old memory's validity interval has ended (valid_to set and passed), the intervals do not overlap: the new
   fact is an update, not a conflict.
 - A real conflict is settled by trust: if the existing memory is more trusted than the proposal can be (its weakest
@@ -17,6 +21,7 @@ from dataclasses import dataclass
 
 from memledger.core.types import Claim, Session, Source, Status, Verdict, WriteProposal, now
 from memledger.guards.models import NLIModel, default_nli
+from memledger.guards.text import same_subject
 
 Neighbours = Callable[[str, Session, int], list[Claim]]
 AGENT_PRIOR = 0.5  # trust of a write with no sources (core/mock.py PRIORS[AGENT])
@@ -35,11 +40,12 @@ class ContradictionCheck:
     name = "contradiction"
 
     def __init__(self, nli: NLIModel | None = None, neighbours: Neighbours | None = None, k: int = 5,
-                 threshold: float = 0.5) -> None:
+                 threshold: float = 0.9, margin: float = 0.5) -> None:
         self.nli = nli or default_nli()
         self.neighbours = neighbours
         self.k = k
         self.threshold = threshold
+        self.margin = margin
         self.last_conflicts: list[Conflict] = []
 
     def attach(self, memory: object) -> ContradictionCheck:
@@ -48,8 +54,20 @@ class ContradictionCheck:
         self.neighbours = neighbours
         return self
 
+    def scores(self, a: str, b: str) -> tuple[float, float]:
+        """(P(contradiction), P(entailment)) from the direction with the higher P(contradiction)."""
+        both = [self.nli(a, b), self.nli(b, a)]
+        best = max(both, key=lambda r: float(r.get("contradiction", 0.0)))
+        return float(best.get("contradiction", 0.0)), float(best.get("entailment", 0.0))
+
     def p_contradiction(self, a: str, b: str) -> float:
-        return max(float(self.nli(a, b).get("contradiction", 0.0)), float(self.nli(b, a).get("contradiction", 0.0)))
+        return self.scores(a, b)[0]
+
+    def is_conflict(self, a: str, b: str) -> tuple[bool, float]:
+        if not same_subject(a, b):
+            return False, 0.0
+        p, e = self.scores(a, b)
+        return p >= self.threshold and p - e >= self.margin, p
 
     def conflicts(self, proposal: WriteProposal) -> list[Conflict]:
         if self.neighbours is None:
@@ -58,8 +76,8 @@ class ContradictionCheck:
         for c in self.neighbours(proposal.text, proposal.session, self.k):
             if c.status in (Status.QUARANTINED, Status.SUPERSEDED) or c.text.strip().lower() == key:
                 continue
-            p = self.p_contradiction(c.text, proposal.text)
-            if p >= self.threshold:
+            conflict, p = self.is_conflict(c.text, proposal.text)
+            if conflict:
                 ended = c.valid_to is not None and c.valid_to <= t
                 out.append(Conflict(c.id, c.text, p, ended, c.trust))
         return out

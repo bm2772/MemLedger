@@ -99,8 +99,62 @@ def lexical_nli(premise: str, hypothesis: str) -> dict[str, float]:
     if topic >= 0.5 and pn and hn and pn != hn and not (hn <= pn):
         return {"contradiction": 0.9, "neutral": 0.05, "entailment": 0.05}
     if topic >= 0.6 and has_negation(premise) != has_negation(hypothesis):
-        return {"contradiction": 0.8, "neutral": 0.1, "entailment": 0.1}
+        return {"contradiction": 0.9, "neutral": 0.05, "entailment": 0.05}
     support = lexical_support(premise, hypothesis)
     if support >= 0.9:
         return {"contradiction": 0.02, "neutral": 0.08, "entailment": 0.9}
     return {"contradiction": 0.05, "neutral": 0.9, "entailment": 0.05}
+
+
+# ---- subjects (who/what a fact is about) ------------------------------------------------------------------------
+_LABEL_PREFIX = re.compile(r"^\s*(?:[A-Z][\w ]{0,40}:\s+)+")  # "Note: ", "Vendor master record: "
+_TOKEN = re.compile(r"[A-Za-z0-9][\w&\-]*(?:\.\d+)*(?:['’]s\b)?")
+_CORP = frozenset({"ltd", "limited", "inc", "llc", "corp", "corporation", "plc", "co", "gmbh", "pvt", "company"})
+
+
+def _is_name(tok: str) -> bool:
+    return tok[:1].isupper() and tok.lower() not in STOPWORDS
+
+
+def proper_nouns(text: str) -> set[str]:
+    """Capitalised words (names, codenames, vendors), lower-cased, possessives and corporate suffixes dropped."""
+    out = set()
+    for tok in _TOKEN.findall(_LABEL_PREFIX.sub("", normalise(text))):
+        w = re.sub(r"['’]s$", "", tok)
+        if _is_name(w) and w.lower() not in _CORP:
+            out.add(w.lower())
+    return out
+
+
+def subject_key(text: str) -> str | None:
+    """The first named phrase of a fact, e.g. 'Project Vorliooru measured ...' -> 'project vorliooru',
+    "Note: Acme Ltd's account ..." -> 'acme'. None if the fact names nothing."""
+    toks = _TOKEN.findall(_LABEL_PREFIX.sub("", normalise(text)))
+    start = next((i for i, t in enumerate(toks) if _is_name(t)), None)
+    if start is None:
+        return None
+    phrase = []
+    for t in toks[start:]:
+        possessive = bool(re.search(r"['’]s$", t))
+        w = re.sub(r"['’]s$", "", t)
+        if not (_is_name(w) or (phrase and (w.isdigit() or (len(w) == 1 and w.isupper())))):  # Server A, Ticket 42
+            break
+        phrase.append(w.lower())
+        if possessive:
+            break
+    words_ = [w for w in phrase if w not in _CORP] or phrase
+    return " ".join(words_)
+
+
+def same_subject(a: str, b: str, min_overlap: float = 0.5) -> bool:
+    """True if two facts are about the same subject: equal (or nested) subject keys; without a key on one side,
+    shared proper nouns (if any) and overlapping topic words."""
+    ka, kb = subject_key(a), subject_key(b)
+    if ka and kb:
+        sa, sb = set(ka.split()), set(kb.split())
+        return sa <= sb or sb <= sa
+    pa, pb = proper_nouns(a), proper_nouns(b)
+    if (pa or pb) and not pa & pb:
+        return False
+    topic = jaccard(content_words(a) - numbers(a), content_words(b) - numbers(b))
+    return topic >= (min_overlap if pa & pb else 0.6)
