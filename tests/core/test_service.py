@@ -38,7 +38,7 @@ def test_ingest_hash_and_prior(svc):
     for kind in SourceKind:
         s = svc.ingest(f"x {kind}", kind, ALICE)
         assert s.prior_trust == PRIORS[kind] and s.id.startswith("s_")
-        assert s.content_hash == item_hash(s.content, s.recorded_at, [])
+        assert s.content_hash == item_hash(s.content, s.recorded_at, [], s.labels)
         assert svc.store.get_source(s.id).content_hash == s.content_hash
 
 
@@ -86,7 +86,7 @@ def test_baseline_accepts_and_sets_times_and_trust(svc):
 def test_claim_hash_depends_on_parent_hash(svc):
     s = svc.ingest("one", SourceKind.USER, ALICE)
     c = svc.store.get_claim(write(svc, "claim", [s.id]))
-    assert c.content_hash == item_hash(c.text, c.recorded_at, [s.content_hash])
+    assert c.content_hash == item_hash(c.text, c.recorded_at, [s.content_hash], c.labels)
     assert c.content_hash != item_hash(c.text, c.recorded_at, ["00"])
 
 

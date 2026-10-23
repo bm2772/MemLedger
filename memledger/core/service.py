@@ -35,9 +35,15 @@ from memledger.store.index import InMemoryIndex, VectorIndex
 from memledger.store.sqlite import SQLiteStore
 
 
-def item_hash(content: str, recorded_at: datetime, parent_hashes: list[str]) -> str:
-    """Slide 14: SHA-256(content | record time | sorted parent hashes)."""
+def item_hash(content: str, recorded_at: datetime, parent_hashes: list[str], labels: Labels | None = None) -> str:
+    """Slide 14: SHA-256(content | record time | sorted parent hashes | labels).
+
+    Labels (team, confidentiality, integrity) go beyond the slide's formula: without them a direct edit of a
+    claim's team or confidentiality would move it across the access boundary undetected.
+    """
     data = content.encode() + b"|" + recorded_at.isoformat().encode() + b"|" + "".join(sorted(parent_hashes)).encode()
+    if labels is not None:
+        data += f"|{labels.team}|{labels.confidentiality}|{int(labels.integrity)}".encode()
     return hashlib.sha256(data).hexdigest()
 
 
@@ -94,8 +100,8 @@ class LedgerService:
     def _ingest(self, content: str, kind: SourceKind, session: Session) -> Source:
         t = now()
         # confidentiality = clearance of the session that brought it in (the access filter keys off it, slide 15 step 6)
-        src = Source(_new_id("s_"), kind, content, Labels(session.team, session.clearance), PRIORS[kind],
-                     item_hash(content, t, []), t)
+        labels = Labels(session.team, session.clearance)
+        src = Source(_new_id("s_"), kind, content, labels, PRIORS[kind], item_hash(content, t, [], labels), t)
         self.store.add_source(src)
         if self.input_screen is not None:  # step 1: a high score means the source never supports anything
             score = float(self.input_screen.score(content))
@@ -163,9 +169,10 @@ class LedgerService:
         t = now()
         conf = max((x.labels.confidentiality for pid in p.context_ids
                     if (x := self.store.get_source(pid) or self.store.get_claim(pid)) is not None), default=0)
-        return Claim(_new_id("c_"), p.text, Labels(p.session.team, conf), trust=score * base,
+        labels = Labels(p.session.team, conf)
+        return Claim(_new_id("c_"), p.text, labels, trust=score * base,
                      valid_from=t, valid_to=None, recorded_at=t,
-                     content_hash=item_hash(p.text, t, [h for _, h in parents]))
+                     content_hash=item_hash(p.text, t, [h for _, h in parents], labels))
 
     # ---- hash chain
     def _current_hashes(self) -> list[str]:
@@ -195,7 +202,7 @@ class LedgerService:
         hashes = []
         for pid in dict.fromkeys(parent_ids):
             if (s := self.store.get_source(pid)) is not None:
-                if item_hash(s.content, s.recorded_at, []) != s.content_hash:
+                if item_hash(s.content, s.recorded_at, [], s.labels) != s.content_hash:
                     return False
                 hashes.append(s.content_hash)
             elif (pc := self.store.get_claim(pid)) is not None:
@@ -204,7 +211,7 @@ class LedgerService:
                 hashes.append(pc.content_hash)
             else:
                 return False
-        return item_hash(claim.text, claim.recorded_at, hashes) == claim.content_hash
+        return item_hash(claim.text, claim.recorded_at, hashes, claim.labels) == claim.content_hash
 
     def verify_claim(self, claim_id: str) -> bool:
         claim = self.store.get_claim(claim_id)

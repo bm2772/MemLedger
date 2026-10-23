@@ -303,9 +303,8 @@ def test_retraction_quarantines_dependents_and_restores_with_new_justification()
     assert svc.verify_claim(a1) and svc.verify_claim(a2)
 
 
-@pytest.mark.xfail(strict=True, reason="KNOWN GAP (finding): the hash covers text, time and parent hashes only (deck "
-                                       "slide 14), so editing a claim's team/confidentiality label is not detected")
 def test_label_tamper_is_detected():
+    """Labels are part of the hash, so a team edit is caught on read and the claim quarantined."""
     pop = Pop("full", seed=7, per_team=3)
     victim = next(c for c, m in pop.claims.items() if m["team"] == "team_a" and m["conf"] == 0)
     subject = pop.claims[victim]["text"].split()[1]
@@ -315,3 +314,4 @@ def test_label_tamper_is_detected():
     pop.svc.store.conn.commit()
     ids = {h.claim.id for h in pop.svc.retrieve(subject, sess("team_b", 2), k=20)}
     assert victim not in ids
+    assert pop.svc.store.get_claim(victim).status.value == "quarantined"
