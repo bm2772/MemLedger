@@ -43,3 +43,9 @@ def test_verdicts_do_not_depend_on_episode_or_version_order(monkeypatch):
     random.Random(3).shuffle(shuffled)
     b = verdicts(shuffled, vs[::-1], make_llm("fake"))
     assert a == b
+
+
+def test_errored_versions_are_reported():
+    from attacks.evaluate import error_warnings
+    rows = {"baseline": [{"error": None}], "full": [{"error": "OSError: gated repo\nmore"}, {"error": None}]}
+    assert error_warnings(rows) == ["WARNING: 1/2 episodes errored in full; most common (1x): OSError: gated repo"]
