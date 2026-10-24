@@ -107,6 +107,10 @@ def gate(**kw):
     claims = {"good": Item("good", False, Labels("team_a"), 0.9, "Acme Ltd bank account is 1234",
                            status=Status.ACTIVE),
               "weak": Item("weak", False, Labels("team_a"), 0.27, "Acme Ltd account is 9876", status=Status.ACTIVE),
+              "invoice": Item("invoice", False, Labels("team_a"), 0.27, "Acme Ltd invoice 77 is for 7,500 USD",
+                              status=Status.ACTIVE),
+              "contested": Item("contested", False, Labels("team_a"), 0.9, "Project Kestrane scored 75",
+                                status=Status.CONTESTED),
               "web": Item("web", True, Labels("team_a"), 0.3, "page", kind=SourceKind.WEB)}
     return ActionGate(registry=REG, resolve=claims.get, **kw)
 
@@ -130,22 +134,46 @@ def test_hijacked_account_denied_not_queued():
     assert not v.ok and v.reason.startswith("denied") and g.queue.pending() == []
 
 
-def test_low_trust_context_waits_for_approval_then_runs_once():
+def test_low_trust_claim_that_supplied_a_param_waits_for_approval_then_runs_once():
     g = gate()
-    params = {"vendor": "Acme Ltd", "amount": 10, "account": "1234"}
-    v = g.allow("send_payment", params, ["good", "weak"], FIN)
-    assert not v.ok and "approval" in v.reason and "weak" in v.reason
+    params = {"vendor": "Acme Ltd", "amount": 7500.0, "account": "1234"}
+    v = g.allow("send_payment", params, ["good", "invoice"], FIN)
+    assert not v.ok and "approval" in v.reason and "invoice" in v.reason and "supplied amount" in v.reason
     [a] = g.queue.pending()
-    assert g.allow("send_payment", params, ["good", "weak"], FIN).reason == v.reason  # deduplicated
+    assert g.allow("send_payment", params, ["good", "invoice"], FIN).reason == v.reason  # deduplicated
     with pytest.raises(PermissionError):
         g.queue.approve(a.id, FIN)  # cannot approve own request (and wrong role)
     with pytest.raises(PermissionError):
         g.queue.approve(a.id, Session("fin2", "team_a", "finance", 1))
     g.queue.approve(a.id, BOSS)
-    assert g.allow("send_payment", params, ["good", "weak"], FIN).ok
-    assert not g.allow("send_payment", params, ["good", "weak"], FIN).ok  # approval used once
+    assert g.allow("send_payment", params, ["good", "invoice"], FIN).ok
+    assert not g.allow("send_payment", params, ["good", "invoice"], FIN).ok  # approval used once
     with pytest.raises(ValueError):
         g.queue.deny(a.id, BOSS)
+
+
+def test_contested_but_irrelevant_memories_do_not_block_registry_bound_payment():
+    """Issue 2 (docs/testing/local_run_2026-10-23.md): Ctx(a) = claims that supplied parameter values only."""
+    g = gate()
+    params = bind_params("send_payment", {"vendor": "Acme Ltd", "amount": 120.0, "account": "9876"}, FIN, REG)
+    v = g.allow("send_payment", params, ["contested", "weak", "invoice", "good"], FIN)
+    assert v.ok, v.reason
+    assert g.queue.pending() == []
+
+
+def test_attacker_account_taken_from_memory_is_blocked():
+    params = {"vendor": "Acme Ltd", "amount": 120.0, "account": "9876"}  # model copied 9876 from memory "weak"
+    assert gate().allow("send_payment", params, ["weak"], FIN).reason.startswith("denied")
+    no_reg = ActionGate(registry=None, resolve=gate().resolve)  # full_no_registry: nothing to bind or compare
+    v = no_reg.allow("send_payment", params, ["weak", "contested"], FIN)
+    assert not v.ok and "weak" in v.reason and "(supplied vendor, account)" in v.reason and "contested:" not in v.reason
+
+
+def test_supplied_matching():
+    from memledger.policy.gate import supplied
+    assert supplied(7500.0, "invoice is for 7,500 USD") and supplied("9876", "account is 9876.")
+    assert not supplied("9876", "account 198765") and not supplied(12, "ticket 12")  # too short to attribute
+    assert supplied("Hi, the plan: Acme Ltd account is 9876. Thanks", "Acme Ltd account is 9876.")  # copied out
 
 
 def test_signed_approval_and_deny():
@@ -161,17 +189,20 @@ def test_signed_approval_and_deny():
 def test_unknown_vendor_and_untrusted_context_go_to_a_person():
     g = gate()
     assert "no registry value" in g.allow("send_payment", {"vendor": "Evil", "account": None}, [], FIN).reason
-    assert "untrusted" in g.allow("send_payment", {"vendor": "Acme Ltd", "account": "1234"}, ["web"], FIN).reason
-    assert "unknown origin" in g.allow("send_payment", {"vendor": "Acme Ltd", "account": "1234"}, ["zz"], FIN).reason
-    g2 = gate(recheck=lambda cid: cid == "weak")  # live fact re-checked at its source
-    assert g2.allow("send_payment", {"vendor": "Acme Ltd", "account": "1234"}, ["weak"], FIN).ok
+    pay = {"vendor": "Acme Ltd", "amount": 7500.0, "account": "1234"}
+    assert "untrusted content" in g.allow("send_payment", pay, ["web"], FIN).reason  # taint, model-chosen amount
+    assert g.allow("send_payment", {"vendor": "Acme Ltd", "account": "1234"}, ["web"], FIN).ok  # all registry-bound
+    assert "unknown origin" in g.allow("send_payment", pay, ["zz"], FIN).reason
+    g2 = gate(recheck=lambda cid: cid == "invoice")  # live fact re-checked at its source
+    assert g2.allow("send_payment", pay, ["invoice"], FIN).ok
 
 
-def test_tainted_session_cannot_send_out_i4():
+def test_tainted_session_cannot_send_out_model_supplied_params_i4():
     ac = AccessControl()
     ac.observe(FIN, [Source("s2", SourceKind.WEB, "page", Labels("team_a"), 0.3)])
-    v = gate(access=ac).allow("send_payment", {"vendor": "Acme Ltd", "account": "1234"}, [], FIN)
-    assert not v.ok and "I4" in v.reason
+    v = gate(access=ac).allow("send_payment", {"vendor": "Acme Ltd", "amount": 50.0, "account": "1234"}, [], FIN)
+    assert not v.ok and "I4" in v.reason and "amount" in v.reason
+    assert not gate(access=ac).allow("send_email", {"to": "AP@acme.example", "body": "secret"}, [], FIN).ok
 
 
 def test_email_recipient_must_be_registry_contact():
@@ -191,14 +222,13 @@ def test_fully_fooled_model_cannot_redirect_payment():
         asked = {"vendor": "Acme Ltd", "amount": 500.0, "account": "9876"}  # what the fooled model wants
         # without binding the gate refuses the attacker's account outright
         assert g.allow("send_payment", asked, poisoned, FIN).reason.startswith("denied")
-        # with binding the account is the registry's; the poisoned context still needs a person
+        # with binding the account is the registry's: the poisoned memory supplied nothing that runs, so it pays 1234
         bound = bind_params("send_payment", asked, FIN)
         assert bound["account"] == "1234"
-        v = g.allow("send_payment", bound, poisoned, FIN)
+        assert g.allow("send_payment", bound, poisoned, FIN).ok
+        # the session that read the poisoned page itself still needs a person for its model-chosen amount (I4)
+        v = g.allow("send_payment", bound, [*poisoned, web.id], FIN)
         assert not v.ok and "approval" in v.reason
-        # even after a human approves, what runs is the registry account
-        g.queue.approve(g.queue.pending()[0].id, BOSS)
-        assert g.allow("send_payment", bound, poisoned, FIN).ok and bound["account"] == "1234"
         # a model that also forges the vendor gets nothing bound and is never executed automatically
         forged = bind_params("send_payment", {"vendor": "Acme Ltd (new account)", "account": "9876"}, FIN)
         assert forged["account"] is None

@@ -216,6 +216,7 @@ class ScreenResult:
     layers: dict[str, float]
     hits: list[str]
     unhidden: Unhidden
+    classifier_raw: float | None = None  # before the classifier's tuned cut-off
 
     @property
     def untrusted(self) -> bool:
@@ -223,17 +224,21 @@ class ScreenResult:
 
 
 class InputScreen:
-    """Implements core.interfaces.InputScreen. classifier: text -> P(injected); None runs layers 1, 2 only."""
+    """Implements core.interfaces.InputScreen. classifier: text -> P(injected); None runs layers 1, 2 only.
+    classifier_cutoff: classifier scores below it count as 0 (default: the classifier's own tuned `cutoff`
+    attribute, see guards/models.TUNED_CUTOFFS; 0 for injected callables without one)."""
 
     name = "input_screen"
 
     def __init__(self, classifier: TextClassifier | None | object = _DEFAULT, high: float = 0.8,
-                 mid: float = 0.5) -> None:
+                 mid: float = 0.5, classifier_cutoff: float | None = None) -> None:
         if not 0.0 <= mid <= high <= 1.0:
             raise ValueError("need 0 <= mid <= high <= 1")
         self.classifier: TextClassifier | None = (default_injection_classifier() if classifier is _DEFAULT
                                                   else classifier)  # type: ignore[assignment]
         self.high, self.mid = high, mid
+        self.classifier_cutoff = (float(getattr(self.classifier, "cutoff", 0.0)) if classifier_cutoff is None
+                                  else classifier_cutoff)
 
     def band(self, score: float) -> str:
         return HIGH if score >= self.high else MID if score >= self.mid else LOW
@@ -248,11 +253,13 @@ class InputScreen:
                 h = [f"{n}@{where}" for n in h]
             rules, hits = max(rules, s), hits + h
         layers = {"unhide": HIDDEN_ONLY if u.hidden else 0.0, "rules": rules}
+        raw = None
         if self.classifier is not None:
             joined = "\n".join(v for _, v in u.views() if v)
-            layers["classifier"] = float(self.classifier(joined)) if joined.strip() else 0.0
+            raw = float(self.classifier(joined)) if joined.strip() else 0.0
+            layers["classifier"] = raw if raw >= self.classifier_cutoff else 0.0
         score = max(layers.values())
-        return ScreenResult(score, self.band(score), layers, hits, u)
+        return ScreenResult(score, self.band(score), layers, hits, u, raw)
 
     def score(self, text: str) -> float:
         return self.assess(text).score

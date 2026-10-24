@@ -6,9 +6,13 @@ actions: payment, email). Unknown tools count as high risk. Only high-risk calls
 1 Protected parameters (registry/binding.py) must equal the signed registry value. A different value is a hijack
   attempt and is denied outright; a missing registry value goes to a person.
 2 A call a reviewer already approved (same tool, params and user) runs once.
-3 Every fact it relies on must be verified: no context item may be untrusted, contested, quarantined or below the
-  high-risk trust threshold unless recheck(id) re-confirms it at its source; the session must not be tainted (I4);
-  email recipients must be registry contacts. Otherwise the call waits in the approval queue.
+3 Every fact it relies on must be verified. Ctx(a) is only the context items that supplied a parameter value the
+  model chose (a value found in the item's text, or the item's text copied into a free-text parameter); parameters
+  bound from or checked against the registry need none, so a registry-bound payment does not depend on unrelated
+  memories in the window. Each item in Ctx(a) must be trusted, uncontested, unquarantined and above the high-risk
+  trust threshold unless recheck(id) re-confirms it at its source. Taint (I4): if the session read untrusted input,
+  no call with model-supplied parameters runs. Email recipients must be registry contacts. Otherwise the call waits
+  in the approval queue.
 
 This is plain code: a fully fooled model still cannot redirect a payment.
 """
@@ -16,6 +20,7 @@ This is plain code: a fully fooled model still cannot redirect a payment.
 from __future__ import annotations
 
 import itertools
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -41,6 +46,28 @@ REVIEWER_ROLES = frozenset({"approver", "registry-admin"})
 
 def _norm(v: object) -> str:
     return "".join(str(v).split()).replace("-", "").lower() if v is not None else ""
+
+
+def _as_text(v: object) -> str:
+    if isinstance(v, bool) or v is None:
+        return ""
+    if isinstance(v, float) and v.is_integer():
+        v = int(v)
+    return " ".join(str(v).split()).lower()
+
+
+def _plain(text: str) -> str:
+    return re.sub(r"(?<=\d),(?=\d{3})", "", " ".join(text.split()).lower())
+
+
+def supplied(value: object, text: str, min_len: int = 3) -> bool:
+    """Did this text supply the parameter value? (value appears as a whole token run, or the text was copied in)"""
+    v, t = _plain(_as_text(value)), _plain(text)
+    if not v or not t:
+        return False
+    if len(v) >= min_len and re.search(r"(?<![\w.])" + re.escape(v) + r"(?![\w]|\.\d)", t):
+        return True
+    return len(t) >= 12 and t.rstrip(".") in v
 
 
 @dataclass
@@ -113,12 +140,16 @@ class ApprovalQueue:
         return None
 
 
+_DEFAULT_REGISTRY: object = object()
+
+
 class ActionGate:
-    """Implements core.interfaces.ActionGate."""
+    """Implements core.interfaces.ActionGate. registry omitted = the default registry (registry.binding);
+    registry=None = no registry at all (the full_no_registry version)."""
 
     name = "action_gate"
 
-    def __init__(self, registry: Registry | None = None, resolve: Resolver | None = None,
+    def __init__(self, registry: Registry | None | object = _DEFAULT_REGISTRY, resolve: Resolver | None = None,
                  access: AccessControl | None = None, queue: ApprovalQueue | None = None,
                  recheck: Callable[[str], bool] | None = None, min_trust: float = 0.7,
                  risk: dict[str, str] | None = None) -> None:
@@ -154,28 +185,61 @@ class ActionGate:
             return None
         return f"{cid}: {problem}"
 
+    def ctx(self, params: dict, model_params: list[str], context_ids: list[str]) -> dict[str, list[str]]:
+        """Ctx(a): context id -> the model-supplied parameters it supplied. Unresolvable ids are kept (unknown
+        origin) when any parameter is model-supplied, since they may have supplied it."""
+        out: dict[str, list[str]] = {}
+        for cid in dict.fromkeys(context_ids):
+            item = self.resolve(cid) if self.resolve else None
+            if item is None:
+                if model_params:
+                    out[cid] = []
+                continue
+            if used := [p for p in model_params if supplied(params[p], item.text)]:
+                out[cid] = used
+        return out
+
+    def _read_untrusted_input(self, session: Session, context_ids: list[str]) -> bool:
+        """Taint: the session read untrusted input (web/flagged/untrusted-labelled sources or claims)."""
+        if self.access is not None and self.access.tainted(session):
+            return True
+        for cid in context_ids:
+            item = self.resolve(cid) if self.resolve else None
+            if item is not None and (item.is_source or item.labels.integrity == Integrity.UNTRUSTED) \
+                    and integrity_of(item) == Integrity.UNTRUSTED:
+                return True
+        return False
+
     def allow(self, tool: str, params: dict, context_claim_ids: list[str], session: Session) -> Verdict:
         level = self.risk(tool)
         if level != HIGH:
             return self._verdict(True, f"{level} risk")
-        reg = self.registry or default_registry()
+        reg = default_registry() if self.registry is _DEFAULT_REGISTRY else self.registry
         problems: list[str] = []
-        for p in protected_params(tool):  # 1: protected parameters only from the registry (I10)
+        verified: set[str] = set()  # parameters whose value the registry vouches for
+        for p, (subject_param, _) in protected_params(tool).items():  # 1: protected params from the registry (I10)
             want = registry_value(tool, p, params, reg)
             if want is None:
                 problems.append(f"no registry value for {p}")
             elif _norm(params.get(p)) != _norm(want):
                 return self._verdict(False, f"denied: {p} does not match the signed registry")
-        if (a := self.queue.consume(tool, params, session)) is not None:  # 2
-            return self._verdict(True, f"approved by {a.reviewer} ({a.id})")
-        if self.access is not None and self.access.tainted(session):  # 3
-            problems.append("session read untrusted content (I4)")
-        problems += [p for cid in dict.fromkeys(context_claim_ids) if (p := self._unverified(cid))]
+            else:
+                verified |= {p, subject_param}
         if tool == "send_email":
             to = _norm(params.get("to"))
             contacts = {_norm(e.value) for e in reg.current() if e.field.lower() in CONTACT_FIELDS} if reg else set()
-            if not to or to not in contacts:
+            if to and to in contacts:
+                verified.add("to")
+            else:
                 problems.append("recipient is not a registry contact")
+        if (a := self.queue.consume(tool, params, session)) is not None:  # 2
+            return self._verdict(True, f"approved by {a.reviewer} ({a.id})")
+        model_params = [p for p, v in params.items() if p not in verified and _as_text(v)]  # 3
+        if model_params and self._read_untrusted_input(session, context_claim_ids):
+            problems.append(f"session read untrusted content; {', '.join(model_params)} not from the registry (I4)")
+        for cid, used in self.ctx(params, model_params, context_claim_ids).items():
+            if (p := self._unverified(cid)) is not None:
+                problems.append(p + (f" (supplied {', '.join(used)})" if used else ""))
         if problems:
             reason = "; ".join(problems)
             a = self.queue.enqueue(tool, params, session, reason)

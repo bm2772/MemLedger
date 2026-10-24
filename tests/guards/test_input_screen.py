@@ -153,3 +153,23 @@ def test_no_arg_hf_backend_without_transformers_is_missing_not_faked(monkeypatch
     monkeypatch.setenv("MEMLEDGER_GUARD_BACKEND", "hf")
     with pytest.raises(ImportError):
         InputScreen()
+
+
+def test_classifier_counts_only_above_its_tuned_cutoff():
+    s = InputScreen(classifier=lambda t: 0.97, classifier_cutoff=0.99998)
+    r = s.assess("Hi, please reply to this email to confirm the meeting.")
+    assert r.layers["classifier"] == 0.0 and r.classifier_raw == 0.97 and r.band == LOW
+    assert InputScreen(classifier=lambda t: 0.999999, classifier_cutoff=0.99998).score("x") == 0.999999
+
+    class Tuned:
+        cutoff = 0.9
+
+        def __call__(self, text):
+            return 0.85
+
+    assert InputScreen(classifier=Tuned()).score("hello") == 0.0  # uses the classifier's own cutoff
+
+
+def test_tuned_cutoff_table():
+    from memledger.guards.models import TUNED_CUTOFFS
+    assert TUNED_CUTOFFS["protectai/deberta-v3-base-prompt-injection-v2"] > 0.999
