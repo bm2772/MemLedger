@@ -31,3 +31,6 @@ See docs/prompts/NEXT_STEPS_2026-10-24.md — it supersedes the remaining days a
 
 ## Remaining (25-26 Oct)
 See docs/prompts/M3_REMAINING_2026-10-25.md (setup, consistency audit, demo check).
+
+## Review and stress test (24-25 Oct)
+See docs/testing/RESULTS_AND_REVIEW_2026-10-24.md, section D.
