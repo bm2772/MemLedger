@@ -31,6 +31,7 @@ memledger/guards/screen.py
 memledger/guards/text.py
 memledger/guards/train/__init__.py
 memledger/guards/train/train_memshield.py
+memledger/guards/train/tune_screen.py
 memledger/policy/__init__.py
 memledger/policy/access.py
 memledger/policy/gate.py
@@ -49,6 +50,11 @@ memledger/store/index.py
 memledger/store/sqlite.py
 tests/test_agent.py
 tests/test_agent_runner.py
+tests/test_attack_families.py
+tests/test_attack_fixes.py
+tests/test_attacks_suite.py
 tests/test_bench.py
+tests/test_episode_v1.py
 tests/test_scenarios.py
+tests/test_setup.py
 tests/test_smoke.py

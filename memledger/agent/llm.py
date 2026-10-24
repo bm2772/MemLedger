@@ -64,7 +64,7 @@ class OpenAICompatLLM:
 
     def __init__(self, model: str | None = None, base_url: str | None = None, api_key: str | None = None,
                  temperature: float = 0.0, seed: int = 0, timeout: float = 120.0):
-        self.model = model or os.environ.get("MEMLEDGER_LLM_MODEL", "llama3.1:8b")
+        self.model = model or os.environ.get("MEMLEDGER_LLM_MODEL", "qwen3:8b")
         self.base_url = (base_url or os.environ.get("MEMLEDGER_LLM_URL", "http://localhost:11434/v1")).rstrip("/")
         self.api_key = api_key or os.environ.get("MEMLEDGER_LLM_KEY", "ollama")
         self.temperature = temperature

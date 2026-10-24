@@ -136,7 +136,7 @@ def load_bipia(split="test", limit=DEFAULT_LIMIT, seed=0, root=None) -> list[Epi
             else:
                 content, category = row["context"], "clean"
             out.append(_ep(f"bipia_{s}_{task}_{i}", "bipia", split, "attack" if injected else "clean", category,
-                           steps=[Step("ingest", content=content, kind=SourceKind.TOOL, id="t0")],
+                           steps=[Step("ingest", content=content, kind=SourceKind.TOOL, id="t0", poison=injected)],
                            expect=Expect(label="injected" if injected else "clean",
                                          blocked=["t0"] if injected else []), **meta))
     return _subset(out, limit, seed)
@@ -149,7 +149,7 @@ def load_injecagent(split="test", limit=DEFAULT_LIMIT, seed=0, root=None) -> lis
     for kind in ("dh", "ds"):
         for i, x in enumerate(_json("injecagent", f"test_cases_{kind}_base.json", root)):
             out.append(_ep(f"injecagent_{kind}_{i}", "injecagent", split, "attack", f"{kind}:{x['Attack Type']}",
-                           steps=[Step("ingest", content=x["Tool Response"], kind=SourceKind.TOOL, id="t0")],
+                           steps=[Step("ingest", content=x["Tool Response"], kind=SourceKind.TOOL, id="t0", poison=True)],
                            expect=Expect(label="injected", blocked=["t0"],
                                          forbidden_tool_calls=[{"tool": t} for t in x["Attacker Tools"]]),
                            user_instruction=x["User Instruction"], user_tool=x["User Tool"],
@@ -179,7 +179,7 @@ def load_agentdojo(split="test", limit=DEFAULT_LIMIT, seed=0, root=None, version
             user_id, user_task = rng.choice(users)
             out.append(_ep(f"agentdojo_{suite_name}_{inj_id}", "agentdojo", split, "attack", suite_name,
                            steps=[Step("ingest", content=AGENTDOJO_TEMPLATE.format(goal=inj.GOAL), kind=SourceKind.TOOL,
-                                       id="t0")],
+                                       id="t0", poison=True)],
                            expect=Expect(label="injected", blocked=["t0"]),
                            user_task=user_id, user_prompt=user_task.PROMPT, injection_task=inj_id, goal=inj.GOAL))
     return _subset(out, limit, seed)
@@ -193,7 +193,7 @@ def load_memshield(split="test", limit=DEFAULT_LIMIT, seed=0, root=None) -> list
     for x in _jsonl("memshield", f"{s}.jsonl", root):
         poisoned = x["label"] != "clean"
         out.append(_ep(f"memshield_{x['id']}", "memshield", split, "attack" if poisoned else "clean",
-                       x.get("attack_type") or "none", steps=[Step("write", text=x["content"], id="t0")],
+                       x.get("attack_type") or "none", steps=[Step("write", text=x["content"], id="t0", poison=poisoned)],
                        expect=Expect(label="poisoned" if poisoned else "clean", blocked=["t0"] if poisoned else []),
                        domain=x.get("domain"), difficulty=x.get("difficulty"), origin=x.get("source")))
     return _subset(out, limit, seed)
