@@ -130,10 +130,14 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--bench-limit", type=int, default=40)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--family-scale", type=float, default=1.0, help="scale the per-family episode counts")
+    p.add_argument("--manifest", help="also copy manifest.json here (committed, e.g. docs/results/suite_manifest.json)")
     a = p.parse_args(argv)
     sizes = {k: max(1, round(v * a.family_scale)) for k, v in FAMILY_SIZES.items()}
     report = write(a.out, SuiteConfig(a.dev_worlds, a.test_worlds, bench_limit=a.bench_limit, seed=a.seed,
                                       family_sizes=sizes))
+    if a.manifest:
+        Path(a.manifest).parent.mkdir(parents=True, exist_ok=True)
+        Path(a.manifest).write_text(json.dumps(report, indent=1) + "\n")
     for split, m in report.items():
         print(f"{split}: {m['n']} episodes {m['by_family']} skipped={sorted(m['skipped'])}")
 

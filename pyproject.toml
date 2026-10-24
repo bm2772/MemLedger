@@ -12,7 +12,9 @@ dependencies = ["pydantic>=2", "cryptography>=42", "numpy"]
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.5"]
 store = ["chromadb>=0.5"]
-models = ["transformers>=4.44", "torch", "sentence-transformers", "vllm"]
+models = ["transformers>=4.44", "torch", "sentence-transformers", "datasets", "accelerate>=0.26",
+          "sentencepiece", "protobuf",  # DeBERTa-v3 tokenizer
+          "vllm; sys_platform == 'linux'"]  # vLLM serves the agent LLM on Brev; Macs use Ollama
 demo = ["streamlit"]
 
 [tool.ruff]
