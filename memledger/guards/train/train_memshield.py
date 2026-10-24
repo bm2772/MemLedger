@@ -52,6 +52,7 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - needs GPU,
     ap.add_argument("--dataset", default="npow/memshield-bench")
     ap.add_argument("--data-dir", help="read <dir>/{train,validation,test}.jsonl instead of the Hub dataset")
     ap.add_argument("--patience", type=int, default=1, help="epochs without validation-F1 gain before stopping")
+    ap.add_argument("--cpu", action="store_true", help="train on CPU (DeBERTa-v3 gives NaN losses on Apple MPS)")
     ap.add_argument("--base", default="microsoft/deberta-v3-base")
     ap.add_argument("--out", default="models/memshield")
     ap.add_argument("--epochs", type=float, default=2)
@@ -104,7 +105,8 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - needs GPU,
     args = TrainingArguments(output_dir=f"{a.out}/checkpoints", num_train_epochs=a.epochs, learning_rate=a.lr,
                              per_device_train_batch_size=a.batch, per_device_eval_batch_size=a.batch,
                              seed=a.seed, eval_strategy=per_epoch, save_strategy=per_epoch, save_total_limit=1,
-                             load_best_model_at_end=val is not None, metric_for_best_model="f1", report_to=[])
+                             load_best_model_at_end=val is not None, metric_for_best_model="f1", report_to=[],
+                             use_cpu=a.cpu)
     trainer = Trainer(model=model, args=args, train_dataset=train, eval_dataset=val,
                       data_collator=DataCollatorWithPadding(tok), compute_metrics=val_metrics,
                       callbacks=[EarlyStoppingCallback(a.patience)] if val is not None else [])

@@ -13,13 +13,15 @@ import argparse
 import os
 import sys
 
-# (model id, allow_patterns or None for everything, gated)
+# PyTorch weights + tokenizer/config only: skips the ONNX/OpenVINO copies (nli-deberta is 5.9 GB with them)
+TORCH = ["*.json", "*.txt", "*.model", "*.safetensors", "pytorch_model.bin"]
+# (model id, allow_patterns, gated)
 MODELS: list[tuple[str, list[str] | None, bool]] = [
-    ("lytang/MiniCheck-RoBERTa-Large", None, False),  # hallucination check; includes pytorch_model.bin
-    ("cross-encoder/nli-deberta-v3-base", None, False),  # contradiction check
-    ("protectai/deberta-v3-base-prompt-injection-v2", None, False),  # input screen layer 3
-    ("BAAI/bge-m3", ["*.json", "*.txt", "*.model", "pytorch_model.bin", "1_Pooling/*"], False),  # embeddings
-    ("meta-llama/Llama-Prompt-Guard-2-86M", None, True),  # gated: accept the licence on huggingface.co first
+    ("lytang/MiniCheck-RoBERTa-Large", TORCH, False),  # hallucination check; weights are pytorch_model.bin
+    ("cross-encoder/nli-deberta-v3-base", TORCH, False),  # contradiction check
+    ("protectai/deberta-v3-base-prompt-injection-v2", TORCH, False),  # input screen layer 3
+    ("BAAI/bge-m3", [*TORCH, "1_Pooling/*"], False),  # embeddings (sentence-transformers)
+    ("meta-llama/Llama-Prompt-Guard-2-86M", TORCH, True),  # gated: accept the licence on huggingface.co first
 ]
 
 

@@ -1,6 +1,8 @@
 """M3 reproducible setup: model fetcher, dataset licences, committed suite manifest (no network)."""
 
 import json
+import sys
+import types
 
 from bench import download, fetch_models
 
@@ -11,6 +13,7 @@ def test_every_dataset_has_a_licence_note():
 
 def test_fetch_models_skips_gated_without_token_and_keeps_going(monkeypatch, capsys):
     monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.setitem(sys.modules, "huggingface_hub", types.ModuleType("huggingface_hub"))  # CI has no [models]
     calls = []
 
     def fake_fetch(model_id, patterns, check_only=False):
