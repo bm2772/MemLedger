@@ -19,11 +19,11 @@ from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 
-from attacks import attribution
+from attacks import attribution, classify
 from attacks.benign import benign_twin
-from attacks.oracle import by_family, overall
+from attacks.oracle import attack_success, by_family, overall
 from attacks.suite import SuiteConfig, build
-from eval.metrics import Rate
+from eval.metrics import Rate, compute
 from eval.runner import make_llm, run
 from eval.versions import VERSIONS
 from memledger.agent.episode import Episode
@@ -40,7 +40,9 @@ def select(eps: list[Episode], limit_per_family: int | None, families: list[str]
         fam = e.meta["family"]
         if families and fam not in families:
             continue
-        pools.setdefault((fam, e.category) if e.kind == "clean" else fam, []).append(e)
+        bench = e.meta.get("part") == "benchmark"  # a benchmark gets its own pool (memshield + MemEvoBench share a family)
+        group = (fam, e.source) if bench else fam
+        pools.setdefault(group if e.kind != "clean" else (group, "clean" if bench else e.category), []).append(e)
     out = []
     for pool in pools.values():
         if limit_per_family is None or len(pool) <= limit_per_family:
@@ -66,6 +68,36 @@ def _rate(d: dict | None) -> str:
 
 def _counts(c: dict, keys: list[str]) -> str:
     return ", ".join(f"{k} {c[k]}" for k in keys if c.get(k)) or "–"
+
+
+def benchmark_block(episodes: list[Episode], rows: dict[str, list[dict]]) -> tuple[dict, list[str]]:
+    """Per benchmark and version: attack success, what harmless input it wrongly stopped, LLM calls, top blocking mechanism."""
+    ep_of = {e.id: e for e in episodes}
+    sources = sorted({e.source for e in episodes if e.meta.get("part") == "benchmark"})
+    res: dict = {}
+    md = ["", ("Benchmark episodes (agent runs with the benchmark payload; attack success by the per-episode oracle, "
+               "'harmless blocked' = clean-twin writes rejected / clean tool outputs quarantined, 'top mechanism' = what "
+               "most often stopped an attack):"), "",
+          ("| benchmark | version | attack success | harmless write rejected | clean input quarantined | "
+           "clean task accuracy | LLM calls | top mechanism |"), "|---" * 8 + "|"]
+    for src in sources:
+        for v, rs in rows.items():
+            mine = [r for r in rs if ep_of[r["episode"]].source == src]
+            atk = [(ep_of[r["episode"]], r) for r in mine if r["kind"] == "attack"]
+            verdicts = [x for e, r in atk if (x := attack_success(e, r)) is not None]
+            m = compute([r for r in mine if r["kind"] == "clean"]) if any(r["kind"] == "clean" for r in mine) else None
+            top = Counter(b for e, r in atk if (b := attribution.blocked_by(e, r, v)))
+            top_s = ", ".join(f"{k} {n}" for k, n in top.most_common(2)) or "–"
+            calls = sum(r["llm"]["calls"] for r in mine)
+            res.setdefault(src, {})[v] = {
+                "attack_success": Rate.of(sum(verdicts), len(verdicts)).__dict__, "llm_calls": calls,
+                "harmless_write_rejected": m["false_rejection_rate"] if m else None,
+                "clean_input_quarantined": m["input_false_block_rate"] if m else None,
+                "clean_task_accuracy": m["task_accuracy"] if m else None, "blocked_by": dict(top)}
+            md.append(f"| {src} | {v} | {Rate.of(sum(verdicts), len(verdicts)).text()} | "
+                      f"{_rate(m and m['false_rejection_rate'])} | {_rate(m and m['input_false_block_rate'])} | "
+                      f"{_rate(m and m['task_accuracy'])} | {calls} | {top_s} |")
+    return res, md if sources else []
 
 
 def tables(episodes: list[Episode], rows: dict[str, list[dict]]) -> tuple[dict, str]:
@@ -127,6 +159,10 @@ def tables(episodes: list[Episode], rows: dict[str, list[dict]]) -> tuple[dict, 
                 "earlier one still counts here):"), "", "| mechanism | " + " | ".join(rows) + " |", "|---" * (1 + len(rows)) + "|"]
     for mech in attribution.ORDER[:-2]:
         md.append(f"| {mech} | " + " | ".join(str(att["fired"][v].get(mech, 0) or "–") for v in rows) + " |")
+    res["benchmarks"], bmd = benchmark_block(episodes, rows)
+    md += bmd
+    res["classification"] = classify.classification(episodes, rows)
+    md.append(classify.markdown(res["classification"], list(rows)))
     if "full" in rows and "full_no_registry" in rows:
         md += ["", "What the registry adds (blocked-by, full vs full_no_registry, per family):", "",
                "| family | succeeded full | succeeded full_no_registry | full: blocked by | full_no_registry: blocked by |",

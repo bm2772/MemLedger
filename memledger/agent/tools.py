@@ -11,7 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from memledger.core.interfaces import ActionGate, MemoryService
-from memledger.core.types import RetrievedMemory, Session, SourceKind, WriteProposal
+from memledger.core.types import RetrievedMemory, Session, Source, SourceKind, WriteProposal
 
 HIGH_RISK = {"send_email", "send_payment"}
 
@@ -63,6 +63,37 @@ SPECS = [
 ]
 
 
+WITHHELD = "[withheld: the input screen quarantined this tool output]"
+
+
+@dataclass
+class StubTool:
+    """A tool an episode defines at run time (benchmark adapters: InjecAgent, AgentDojo, BIPIA documents).
+
+    response set    a data tool: the text is ingested as a source of `kind` (so the input screen sees it) and returned
+                    to the model as quoted data; a quarantined output is withheld
+    response None   an action tool: the call is recorded; high-risk ones go through the ActionGate and, if allowed, are
+                    appended to the outbox like send_email
+    """
+
+    name: str
+    description: str = ""
+    params: dict = field(default_factory=dict)  # parameter name -> description (all strings)
+    response: str | None = None
+    kind: SourceKind = SourceKind.TOOL
+    high_risk: bool = False
+
+    @classmethod
+    def from_dict(cls, d: dict) -> StubTool:
+        return cls(**{**d, "kind": SourceKind(d.get("kind", "tool"))})
+
+    def spec(self) -> dict:
+        props = {p: {"type": "string", "description": str(desc)} for p, desc in self.params.items()}
+        out = _fn(self.name, self.description or f"Tool {self.name}.", props, list(self.params))
+        out["function"]["parameters"]["additionalProperties"] = True
+        return out
+
+
 def format_memories(hits: list[RetrievedMemory]) -> str:
     """Each memory shown with its id, source ids and trust (step 7), marked as quoted data."""
     if not hits:
@@ -81,12 +112,21 @@ class ToolBox:
         self.gate = gate
         self.k = k
         self.outbox: list[dict] = []  # executed high-risk actions (what actually left the system)
+        self.stubs: dict[str, StubTool] = {}
+        self.ingested: list[Source] = []  # sources created by tool calls (read_web, data stubs), for the eval rows
+
+    def register_stub(self, stub: StubTool) -> None:
+        """Add an episode-defined tool at run time. The built-in tools keep their meaning (a stub cannot replace one)."""
+        if not hasattr(self, f"_t_{stub.name}"):
+            self.stubs[stub.name] = stub
 
     def specs(self) -> list[dict]:
-        return SPECS
+        return SPECS + [t.spec() for t in self.stubs.values()]
 
     def call(self, name: str, args: dict, state: RunState) -> ToolRecord:
         handler = getattr(self, f"_t_{name}", None)
+        if name in self.stubs:
+            handler = lambda a, st, _s=self.stubs[name]: self._stub(_s, a, st)
         if handler is None:
             rec = ToolRecord(name, args, args, "error", reason="unknown tool")
         else:
@@ -109,7 +149,10 @@ class ToolBox:
         if page is None:
             return ToolRecord("read_web", args, args, "error", reason="404")
         src = self.memory.ingest(page, SourceKind.WEB, state.session)
+        self.ingested.append(src)
         state.see([src.id])
+        if src.flagged:
+            return ToolRecord("read_web", args, args, "ok", WITHHELD)
         return ToolRecord("read_web", args, args, "ok", f'<data source="{src.id}" kind="web" url="{url}">\n'
                                                         f"{page}\n</data>")
 
@@ -122,6 +165,21 @@ class ToolBox:
             reasons = "; ".join(v.reason for v in res.verdicts if not v.ok)
             return ToolRecord("remember", args, args, "blocked", "not stored", reasons)
         return ToolRecord("remember", args, args, "ok", f"stored as {', '.join(res.claim_ids)}")
+
+    # episode-defined tools --------------------------------------------------------------------------------------
+    def _stub(self, stub: StubTool, args: dict, state: RunState) -> ToolRecord:
+        params = {k: v if isinstance(v, (int, float, bool)) else str(v) for k, v in args.items()}
+        if stub.response is not None:
+            src = self.memory.ingest(stub.response, stub.kind, state.session)
+            self.ingested.append(src)
+            state.see([src.id])
+            if src.flagged:
+                return ToolRecord(stub.name, args, params, "ok", WITHHELD)
+            return ToolRecord(stub.name, args, params, "ok", f'<data source="{src.id}" kind="{stub.kind.value}" '
+                                                             f'tool="{stub.name}">\n{stub.response}\n</data>')
+        if stub.high_risk:
+            return self._high_risk(stub.name, args, params, state)
+        return ToolRecord(stub.name, args, params, "ok", "(simulated result)")
 
     # high risk ------------------------------------------------------------------------------------------------
     def _t_send_email(self, args: dict, state: RunState) -> ToolRecord:

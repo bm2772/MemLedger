@@ -6,7 +6,8 @@ For qwen3 it switches thinking off: with thinking on every call is ~30x slower (
 
 GullibleLLM is a deterministic stand-in for offline runs and tests: it reads every page it is told to, remembers the
 "Note:" in it, pays the last account number it saw, and answers by echoing the memories it was shown. It is fooled
-by everything, so differences between versions come only from the memory layer.
+by everything, so differences between versions come only from the memory layer. For the benchmark adapters it also
+follows instructions found in tool outputs and retrieved memories (attacks/gullible.py).
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ import json
 import re
 import urllib.request
 
+from attacks.gullible import respond as benchmark_response
 from infra.cost_logger import TokenMeter
 from memledger.agent.llm import LLMResponse, OpenAICompatLLM, ToolCall, parse_response
 
@@ -59,6 +61,8 @@ class GullibleLLM:
     def complete(self, messages: list[dict], tools: list[dict]) -> LLMResponse:
         self.meter.add({})
         last, task = messages[-1], messages[1]["content"]
+        if (resp := benchmark_response(messages, tools)) is not None:  # benchmark episodes: follows injected text
+            return resp
         if last["role"] == "tool":
             if "<data" in last["content"] and (m := re.search(r"Note: [^<]*", last["content"])):
                 return LLMResponse("", [ToolCall("remember", {"text": m.group(0).strip()})])

@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from memledger.agent.episode import Episode, Step
 from memledger.agent.llm import LLM
 from memledger.agent.loop import Agent, AgentRun
-from memledger.agent.tools import RegistryLookup, RunState, ToolBox, ToolRecord
+from memledger.agent.tools import RegistryLookup, RunState, StubTool, ToolBox, ToolRecord
 from memledger.core.interfaces import ActionGate, MemoryService
 from memledger.core.types import RetrievedMemory, Session, Source, WriteProposal, WriteResult
 
@@ -30,6 +30,7 @@ class EpisodeResult:
     flags: dict[str, dict] = field(default_factory=dict)
     runs: dict[str, AgentRun] = field(default_factory=dict)  # task step id -> agent run
     outbox: list[dict] = field(default_factory=list)  # high-risk actions that actually executed
+    tool_ingests: list[Source] = field(default_factory=list)  # sources the agent's tool calls created (web, data stubs)
 
     @property
     def seed_sources(self) -> dict[str, str]:
@@ -112,8 +113,11 @@ def run_episode(episode: Episode, memory: MemoryService, llm: LLM, registry_look
     result = EpisodeResult(episode.id)
     load_seeds(memory, episode, result)
     tools = ToolBox(memory, web=episode.meta.get("web"), registry_lookup=registry_lookup, gate=gate)
+    for spec in episode.meta.get("stub_tools", []):  # benchmark adapters define their tools per episode (bench/loaders.py)
+        tools.register_stub(StubTool.from_dict(spec))
     play = _Play(episode, memory, Agent(memory, llm, tools, max_steps=max_steps), tools, result)
     for i, s in enumerate(episode.steps):
         play.step(i, s)
     result.outbox = tools.outbox
+    result.tool_ingests = tools.ingested
     return result

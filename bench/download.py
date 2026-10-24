@@ -47,7 +47,7 @@ NAMES = [*FILES, "llm_aggrefact", "agentdojo"]
 
 
 def data_dir(name: str = "", root: str | Path | None = None) -> Path:
-    base = Path(root or os.environ.get("MEMLEDGER_DATA") or Path(__file__).resolve().parents[1] / "data")
+    base = Path(root or os.environ.get("MEMLEDGER_DATA") or os.environ.get("MEMLEDGER_DATA_DIR") or Path(__file__).resolve().parents[1] / "data")
     return base / name if name else base
 
 

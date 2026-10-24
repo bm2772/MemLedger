@@ -10,9 +10,12 @@ in meta["family"]:
   families    seven attack families generated from seeds (attacks/<family>.py, Episode v1 with an oracle in
              meta["oracle"]): agentpoison, poisonedrag, minja, summary_laundering, repetition_flooding, db_tamper and the
              8x6 isolation_matrix. They count as part "scenario". Dev seeds are 0..n-1, test seeds 10000..10000+n-1.
-  benchmark  published payloads (bench/loaders.py): memshield-bench poisoned memory records, MemEvoBench misleading
-             memories, BIPIA documents with planted instructions, InjecAgent tool-call hijacks (test only) and
-             AgentDojo (test only, if installed). Official splits where they exist; dev never draws on test data.
+  benchmark  published payloads adapted to agent episodes (bench/loaders.py): memshield-bench and MemEvoBench memory
+             entries (family "poisoning"; ingested as sources, written with that source as support, then a question),
+             BIPIA documents with an inserted text attack (planted_doc), InjecAgent tool-response hijacks and AgentDojo
+             injection tasks (tool_hijack, test only). Every attack episode has a goal oracle (meta["oracle"]) and a
+             clean counterpart. Official splits where they exist; dev never draws on test data (BIPIA: train for
+             tuning, test for evaluation).
 
 Benchmarks whose data is missing are skipped and reported in the manifest (run `python -m bench.download <name>`).
 
