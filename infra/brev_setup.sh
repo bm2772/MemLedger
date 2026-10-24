@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Brev GPU instance bootstrap (M4). Idempotent: safe to re-run after a restart.
 #   1. clone/update the repo into /home/ubuntu/workspace/MemLedger
-#   2. create a Python 3.11 venv with vLLM + transformers + sentence-transformers
+#   2. `make setup-models data suite`: Python 3.11 .venv with every extra (incl. vLLM), checker models in the HF
+#      cache, benchmarks in data/, attack suite in data/attacks (same commands as on a Mac)
 #   3. start a vLLM OpenAI-compatible server for the 8-12B main model on :$PORT and wait until healthy
 # Usage:  bash brev_setup.sh            (env: MODEL, PORT, MAX_MODEL_LEN, BRANCH, HF_TOKEN)
 # Then:   export OPENAI_BASE_URL=http://localhost:8000/v1 OPENAI_API_KEY=EMPTY  and run eval/.
+# Qwen3: send {"think": false} / chat_template_kwargs {"enable_thinking": false} with every request; with thinking
+# on, each call is ~30x slower (docs/testing/local_run_2026-10-23.md).
 # STOP THE INSTANCE when done (see infra/README.md) and log the session with infra/cost_logger.py.
 set -euo pipefail
 
@@ -14,7 +17,8 @@ BRANCH=${BRANCH:-main}
 MODEL=${MODEL:-Qwen/Qwen3-8B}
 PORT=${PORT:-8000}
 MAX_MODEL_LEN=${MAX_MODEL_LEN:-16384}
-VENV=$WORKSPACE/.venv
+REPO=$WORKSPACE/MemLedger
+VENV=$REPO/.venv  # created by `make setup-models`
 LOG=$WORKSPACE/vllm.log
 
 mkdir -p "$WORKSPACE"
@@ -32,17 +36,14 @@ if ! command -v python3.11 >/dev/null; then
   sudo add-apt-repository -y ppa:deadsnakes/ppa && sudo apt-get update
   sudo apt-get install -y python3.11 python3.11-venv python3.11-dev
 fi
-[ -x "$VENV/bin/python" ] || python3.11 -m venv "$VENV"
-"$VENV/bin/pip" install -q --upgrade pip
-"$VENV/bin/pip" install -q "vllm>=0.6" "transformers>=4.44" sentence-transformers
-"$VENV/bin/pip" install -q -e "$WORKSPACE/MemLedger[dev,store]"
+make -C "$REPO" PY=python3.11 setup-models data suite
 
 if curl -sf "http://localhost:$PORT/health" >/dev/null; then
   echo "vLLM already running on :$PORT"
 else
   echo "starting vLLM ($MODEL) on :$PORT, log: $LOG"
   nohup "$VENV/bin/vllm" serve "$MODEL" --host 0.0.0.0 --port "$PORT" \
-    --max-model-len "$MAX_MODEL_LEN" --served-model-name main >"$LOG" 2>&1 &
+    --max-model-len "$MAX_MODEL_LEN" --served-model-name main "$MODEL" >"$LOG" 2>&1 &
   for _ in $(seq 1 120); do  # weights download + load can take several minutes
     curl -sf "http://localhost:$PORT/health" >/dev/null && break
     sleep 10
@@ -51,5 +52,7 @@ else
 fi
 
 nvidia-smi --query-gpu=name,memory.used,memory.total --format=csv || true
-echo "ready: OPENAI_BASE_URL=http://localhost:$PORT/v1 model=main"
-echo "reminder: python infra/cost_logger.py session ... when done, then STOP the instance"
+echo "ready: OPENAI_BASE_URL=http://localhost:$PORT/v1 model=main or $MODEL (use $MODEL for qwen3 so thinking is switched off)"
+echo "suite: $(cat "$REPO/docs/results/suite_manifest.json" | head -c 300)..."
+echo "reminder: python infra/cost_logger.py session ... (appends to infra/budget.csv) when done, then STOP the instance"
+echo "backstop: sudo shutdown -h +240   # never leave the GPU running idle"
