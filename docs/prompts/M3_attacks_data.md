@@ -28,3 +28,6 @@ Generate the final test set (no peeking during tuning). On 27 Oct test M2's area
 
 ## Next (24 Oct)
 See docs/prompts/NEXT_STEPS_2026-10-24.md — it supersedes the remaining days above where they differ.
+
+## Remaining (25-26 Oct)
+See docs/prompts/M3_REMAINING_2026-10-25.md (setup, consistency audit, demo check).
