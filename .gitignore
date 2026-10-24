@@ -19,3 +19,4 @@ chroma/
 *.db
 results/raw/
 .DS_Store
+*.egg-info/
