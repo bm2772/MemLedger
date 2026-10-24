@@ -10,10 +10,11 @@ requires-python = ">=3.11"
 dependencies = ["pydantic>=2", "cryptography>=42", "numpy"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "ruff>=0.5"]
+dev = ["pytest>=8", "ruff>=0.5", "fastapi>=0.110", "httpx>=0.27"]  # fastapi/httpx: tests/console
 store = ["chromadb>=0.5"]
 models = ["transformers>=4.44", "torch", "sentence-transformers", "vllm"]
 demo = ["streamlit"]
+web = ["fastapi>=0.110", "uvicorn[standard]>=0.29"]  # the console: python -m web
 
 [tool.ruff]
 line-length = 110

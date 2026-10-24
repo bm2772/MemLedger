@@ -19,3 +19,7 @@ chroma/
 *.db
 results/raw/
 .DS_Store
+var/
+node_modules/
+web/ui/dist/
+*.tsbuildinfo
