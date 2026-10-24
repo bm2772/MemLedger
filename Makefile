@@ -24,7 +24,7 @@ data:  # published benchmarks into data/ (gitignored); skips what is offline or 
 suite:  # dev/test attack suite incl. downloaded benchmarks; only the manifest is committed
 	PYTHONPATH=. .venv/bin/python -m attacks.suite --out data/attacks --manifest docs/results/suite_manifest.json
 memshield:  # fine-tune the write-time memory screen on memshield TRAIN (validation for early stopping)
-	# DeBERTa-v3 gives NaN losses on Apple MPS, so Macs train on CPU (~1 h); on Brev it uses the GPU
+	# run on Brev (GPU, a few minutes). Macs: MPS gives NaN losses with DeBERTa-v3, so --cpu, which is far too slow
 	.venv/bin/python -m memledger.guards.train.train_memshield --data-dir data/memshield --out $(MEMSHIELD_DIR) \
 		$(if $(filter Darwin,$(shell uname -s)),--cpu)
 test:
