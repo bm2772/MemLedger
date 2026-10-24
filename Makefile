@@ -2,6 +2,8 @@ PY ?= $(shell command -v python3.11 || command -v python3 || command -v python)
 DATA_SETS = memshield memevobench bipia injecagent agentdojo
 MEMSHIELD_DIR ?= models/memshield
 # use the fine-tuned memshield classifier once `make memshield` has produced it (models/ is gitignored)
+# Prompt Guard 2 is gated: without HF_TOKEN use the ungated ProtectAI classifier (tuned cut-off in guards/models.py)
+export MEMLEDGER_PROMPT_GUARD_MODEL ?= $(if $(HF_TOKEN),meta-llama/Llama-Prompt-Guard-2-86M,protectai/deberta-v3-base-prompt-injection-v2)
 export MEMLEDGER_MEMSHIELD_MODEL ?= $(if $(wildcard $(MEMSHIELD_DIR)/config.json),$(abspath $(MEMSHIELD_DIR)))
 
 .PHONY: setup setup-models data suite memshield test lint eval-local
