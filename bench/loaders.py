@@ -18,7 +18,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from bench.download import data_dir
-from memledger.agent.episode import Episode, Expect, Seed, Turn
+from memledger.agent.episode import Episode, Expect, Seed, Step
 from memledger.core.types import Session, SourceKind
 
 USER = Session("bench_user", "bench", "researcher", 0)
@@ -65,8 +65,9 @@ def _test_only(name: str, split: str) -> None:
         raise ValueError(f"{name} is test-only (never used for tuning)")
 
 
-def _ep(id: str, source: str, split: str, kind: str, category: str, seeds=(), turns=(), **kw) -> Episode:
-    return Episode(id, source, split, kind, category, USER, list(seeds), list(turns), kw.pop("expect", Expect()), kw)
+def _ep(id: str, source: str, split: str, kind: str, category: str, seeds=(), steps=(), **kw) -> Episode:
+    return Episode(id, source, split, kind, category, {"user": USER}, "user", list(seeds), list(steps),
+                   kw.pop("expect", Expect()), meta=kw)
 
 
 # ---------------------------------------------------------------------------------------------- usefulness (clean)
@@ -80,7 +81,7 @@ def load_longmemeval(split="test", limit=DEFAULT_LIMIT, seed=0, root=None) -> li
                  for sid, date, sess in zip(x["haystack_session_ids"], x["haystack_dates"], x["haystack_sessions"])]
         q = f"(Today is {x['question_date']}.) {x['question']}"
         out.append(_ep(f"lme_{x['question_id']}", "longmemeval", split, "clean", x["question_type"], seeds,
-                       [Turn("task", q, id="t0")], expect=Expect(answer=str(x["answer"])),
+                       [Step("task", content=q, id="t0")], expect=Expect(answer=str(x["answer"])),
                        evidence=x.get("answer_session_ids", []), abstention=x["question_id"].endswith("_abs")))
     return out
 
@@ -100,7 +101,7 @@ def load_locomo(split="test", limit=DEFAULT_LIMIT, seed=0, root=None) -> list[Ep
             cat = qa.get("category")
             adversarial = cat == 5
             out.append(_ep(f"locomo_{conv['sample_id']}_{i}", "locomo", split, "clean",
-                           "adversarial" if adversarial else f"cat{cat}", seeds, [Turn("task", qa["question"], id="t0")],
+                           "adversarial" if adversarial else f"cat{cat}", seeds, [Step("task", content=qa["question"], id="t0")],
                            expect=Expect(answer=None if adversarial else str(qa.get("answer"))),
                            evidence=qa.get("evidence", []), adversarial_answer=qa.get("adversarial_answer")))
     return _subset(out, limit, seed)
@@ -135,7 +136,7 @@ def load_bipia(split="test", limit=DEFAULT_LIMIT, seed=0, root=None) -> list[Epi
             else:
                 content, category = row["context"], "clean"
             out.append(_ep(f"bipia_{s}_{task}_{i}", "bipia", split, "attack" if injected else "clean", category,
-                           turns=[Turn("ingest", content, kind=SourceKind.TOOL, id="t0")],
+                           steps=[Step("ingest", content=content, kind=SourceKind.TOOL, id="t0")],
                            expect=Expect(label="injected" if injected else "clean",
                                          blocked=["t0"] if injected else []), **meta))
     return _subset(out, limit, seed)
@@ -148,7 +149,7 @@ def load_injecagent(split="test", limit=DEFAULT_LIMIT, seed=0, root=None) -> lis
     for kind in ("dh", "ds"):
         for i, x in enumerate(_json("injecagent", f"test_cases_{kind}_base.json", root)):
             out.append(_ep(f"injecagent_{kind}_{i}", "injecagent", split, "attack", f"{kind}:{x['Attack Type']}",
-                           turns=[Turn("ingest", x["Tool Response"], kind=SourceKind.TOOL, id="t0")],
+                           steps=[Step("ingest", content=x["Tool Response"], kind=SourceKind.TOOL, id="t0")],
                            expect=Expect(label="injected", blocked=["t0"],
                                          forbidden_tool_calls=[{"tool": t} for t in x["Attacker Tools"]]),
                            user_instruction=x["User Instruction"], user_tool=x["User Tool"],
@@ -177,7 +178,7 @@ def load_agentdojo(split="test", limit=DEFAULT_LIMIT, seed=0, root=None, version
         for inj_id, inj in sorted(suite.injection_tasks.items()):
             user_id, user_task = rng.choice(users)
             out.append(_ep(f"agentdojo_{suite_name}_{inj_id}", "agentdojo", split, "attack", suite_name,
-                           turns=[Turn("ingest", AGENTDOJO_TEMPLATE.format(goal=inj.GOAL), kind=SourceKind.TOOL,
+                           steps=[Step("ingest", content=AGENTDOJO_TEMPLATE.format(goal=inj.GOAL), kind=SourceKind.TOOL,
                                        id="t0")],
                            expect=Expect(label="injected", blocked=["t0"]),
                            user_task=user_id, user_prompt=user_task.PROMPT, injection_task=inj_id, goal=inj.GOAL))
@@ -192,7 +193,7 @@ def load_memshield(split="test", limit=DEFAULT_LIMIT, seed=0, root=None) -> list
     for x in _jsonl("memshield", f"{s}.jsonl", root):
         poisoned = x["label"] != "clean"
         out.append(_ep(f"memshield_{x['id']}", "memshield", split, "attack" if poisoned else "clean",
-                       x.get("attack_type") or "none", turns=[Turn("propose", x["content"], id="t0")],
+                       x.get("attack_type") or "none", steps=[Step("write", text=x["content"], id="t0")],
                        expect=Expect(label="poisoned" if poisoned else "clean", blocked=["t0"] if poisoned else []),
                        domain=x.get("domain"), difficulty=x.get("difficulty"), origin=x.get("source")))
     return _subset(out, limit, seed)
@@ -222,7 +223,7 @@ def load_memevobench(split="test", limit=DEFAULT_LIMIT, seed=0, root=None) -> li
                 if not x.get(f"test_query{q}"):
                     continue
                 out.append(_ep(f"memevo_{domain}_{i}{q or '_1'}", "memevobench", split, "attack", domain, seeds,
-                               [Turn("task", x[f"test_query{q}"], id="t0")],
+                               [Step("task", content=x[f"test_query{q}"], id="t0")],
                                expect=Expect(blocked=[s.id for s in seeds if s.poisoned]),
                                reference_answer=x.get(f"test_correct_answer{q}"), risk_type=x.get(f"risk_type{q}")))
     if not out and not any(data_dir("memevobench", root).glob("*.json")):
@@ -250,7 +251,7 @@ def load_ragtruth(split="test", limit=DEFAULT_LIMIT, seed=0, root=None) -> list[
         src = sources[r["source_id"]]
         out.append(_ep(f"ragtruth_{r['id']}", "ragtruth", split, "clean", src.get("task_type", ""),
                        [Seed(f"src{r['source_id']}", _render_source(src["source_info"]), TEAM, SourceKind.TOOL)],
-                       [Turn("propose", r["response"], id="t0")],
+                       [Step("write", text=r["response"], id="t0")],
                        expect=Expect(label="hallucinated" if r.get("labels") else "supported"),
                        spans=r.get("labels", []), model=r.get("model")))
     return _subset(out, limit, seed)
@@ -265,7 +266,7 @@ def load_halueval(split="test", limit=DEFAULT_LIMIT, seed=0, root=None) -> list[
         seeds = [Seed(f"k{i}", x["knowledge"], TEAM, SourceKind.PAPER)]
         for label, ans in (("supported", x["right_answer"]), ("hallucinated", x["hallucinated_answer"])):
             out.append(_ep(f"halueval_{i}_{label}", "halueval", split, "clean", "qa", seeds,
-                           [Turn("propose", f"Q: {x['question']} A: {ans}", id="t0")], expect=Expect(label=label)))
+                           [Step("write", text=f"Q: {x['question']} A: {ans}", id="t0")], expect=Expect(label=label)))
     return _subset(out, limit, seed)
 
 
@@ -275,7 +276,7 @@ def load_llm_aggrefact(split="test", limit=DEFAULT_LIMIT, seed=0, root=None) -> 
     out = []
     for i, x in enumerate(_jsonl("llm_aggrefact", f"{s}.jsonl", root)):
         out.append(_ep(f"aggrefact_{s}_{i}", "llm_aggrefact", split, "clean", str(x.get("dataset", "")),
-                       [Seed(f"doc{i}", x["doc"], TEAM, SourceKind.TOOL)], [Turn("propose", x["claim"], id="t0")],
+                       [Seed(f"doc{i}", x["doc"], TEAM, SourceKind.TOOL)], [Step("write", text=x["claim"], id="t0")],
                        expect=Expect(label="supported" if int(x["label"]) == 1 else "hallucinated")))
     return _subset(out, limit, seed)
 

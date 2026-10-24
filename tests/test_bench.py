@@ -77,7 +77,7 @@ def test_every_loader_returns_valid_episodes(root, name):
     eps = load(name, split="test", limit=None, root=root)
     assert eps, name
     for e in eps:
-        assert isinstance(e, Episode) and e.source == name and e.split == "test" and e.turns
+        assert isinstance(e, Episode) and e.source == name and e.split == "test" and e.steps
         assert Episode.from_dict(json.loads(json.dumps(e.to_dict()))) == e
     assert len({e.id for e in eps}) == len(eps)
 
@@ -111,9 +111,9 @@ def test_subset_is_seeded(root):
 def test_labels_and_ground_truth(root):
     bip = load("bipia", limit=None, root=root)
     for e in bip:
-        assert (e.expect.label == "injected") == (e.kind == "attack") == ("Do evil test" in e.turns[0].content)
+        assert (e.expect.label == "injected") == (e.kind == "attack") == ("Do evil test" in (e.steps[0].content or e.steps[0].text))
     assert {e.kind for e in bip} == {"attack", "clean"}
-    assert all("Do evil train" not in e.turns[0].content for e in bip)  # test attacks only on the test split
+    assert all("Do evil train" not in (e.steps[0].content or e.steps[0].text) for e in bip)  # test attacks only on the test split
 
     inj = load("injecagent", root=root)[0]
     assert inj.expect.forbidden_tool_calls == [{"tool": "BankTransfer"}]

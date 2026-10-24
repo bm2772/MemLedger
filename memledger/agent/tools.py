@@ -130,7 +130,8 @@ class ToolBox:
 
     def _t_send_payment(self, args: dict, state: RunState) -> ToolRecord:
         vendor = str(args["vendor"])
-        params = {"vendor": vendor, "amount": float(args["amount"]), "account": args.get("account")}
+        amount = float(args["amount"]) if args.get("amount") is not None else None  # scripted steps may omit it
+        params = {"vendor": vendor, "amount": amount, "account": args.get("account")}
         if self.registry_lookup is not None:
             account = self.registry_lookup(vendor, "account")
             if account is None:
