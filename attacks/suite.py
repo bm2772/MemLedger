@@ -7,6 +7,9 @@ in meta["family"]:
              clearance leaks via the model (I1), plus the clean recall/payment episodes that measure usefulness.
              Dev and test use disjoint worlds (dev seeds 0.., test seeds 1000..), so no memory, canary or vendor
              account is shared between them.
+  families    seven attack families generated from seeds (attacks/<family>.py, Episode v1 with an oracle in
+             meta["oracle"]): agentpoison, poisonedrag, minja, summary_laundering, repetition_flooding, db_tamper and the
+             8x6 isolation_matrix. They count as part "scenario". Dev seeds are 0..n-1, test seeds 10000..10000+n-1.
   benchmark  published payloads (bench/loaders.py): memshield-bench poisoned memory records, MemEvoBench misleading
              memories, BIPIA documents with planted instructions, InjecAgent tool-call hijacks (test only) and
              AgentDojo (test only, if installed). Official splits where they exist; dev never draws on test data.
@@ -25,6 +28,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from attacks import agentpoison, db_tamper, flooding, isolation, laundering, minja, poisonedrag
 from bench import load
 from memledger.agent.episode import Episode, dump_jsonl
 from scenarios.generator import Config, generate
@@ -36,6 +40,11 @@ FAMILY = {  # scenario category / benchmark name -> attack family
     "memshield": "poisoning", "memevobench": "poisoning", "bipia": "planted_doc",
     "injecagent": "tool_hijack", "agentdojo": "tool_hijack",
 }
+FAMILIES = {m.FAMILY: m for m in (agentpoison, poisonedrag, minja, laundering, flooding, db_tamper, isolation)}
+FAMILY.update({name: name for name in FAMILIES})
+DEV_SEED0, TEST_SEED0 = 0, 10_000  # per-family generator seeds; the ranges never overlap
+FAMILY_SIZES = {"agentpoison": 60, "poisonedrag": 60, "minja": 60, "summary_laundering": 64, "repetition_flooding": 64,
+                "db_tamper": 72, "isolation_matrix": 144}  # per split; multiples of the variant count (>= 500 in all)
 # (benchmark, splits it may be used for); InjecAgent and AgentDojo are test only (CLAUDE.md)
 BENCHMARKS = [("memshield", SPLITS), ("memevobench", SPLITS), ("bipia", SPLITS),
               ("injecagent", ("test",)), ("agentdojo", ("test",))]
@@ -49,6 +58,7 @@ class SuiteConfig:
     bench_limit: int = 40  # per benchmark and split
     seed: int = 0
     benchmarks: list[str] = field(default_factory=lambda: [b for b, _ in BENCHMARKS])
+    family_sizes: dict[str, int] = field(default_factory=lambda: dict(FAMILY_SIZES))  # episodes per family and split
 
 
 def _tag(e: Episode, split: str, part: str) -> Episode:
@@ -63,6 +73,12 @@ def scenario_episodes(split: str, cfg: SuiteConfig) -> list[Episode]:
     for i in range(n):
         out += [_tag(e, split, "scenario") for e in generate(Config(seed=cfg.seed + base + i, n_teams=cfg.n_teams)).episodes]
     return out
+
+
+def family_episodes(split: str, cfg: SuiteConfig) -> list[Episode]:
+    base = DEV_SEED0 if split == "dev" else TEST_SEED0
+    return [_tag(FAMILIES[name].generate(base + i), split, "scenario")
+            for name, n in cfg.family_sizes.items() for i in range(n)]
 
 
 def benchmark_episodes(split: str, cfg: SuiteConfig, root: str | Path | None = None) -> tuple[list[Episode], dict]:
@@ -84,7 +100,7 @@ def build(split: str, cfg: SuiteConfig | None = None, root: str | Path | None = 
         raise ValueError(f"split must be one of {SPLITS}, got {split!r}")
     cfg = cfg or SuiteConfig()
     bench_eps, skipped = benchmark_episodes(split, cfg, root)
-    return scenario_episodes(split, cfg) + bench_eps, skipped
+    return scenario_episodes(split, cfg) + family_episodes(split, cfg) + bench_eps, skipped
 
 
 def manifest(eps: list[Episode], skipped: dict) -> dict:
@@ -113,8 +129,11 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--test-worlds", type=int, default=3)
     p.add_argument("--bench-limit", type=int, default=40)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--family-scale", type=float, default=1.0, help="scale the per-family episode counts")
     a = p.parse_args(argv)
-    report = write(a.out, SuiteConfig(a.dev_worlds, a.test_worlds, bench_limit=a.bench_limit, seed=a.seed))
+    sizes = {k: max(1, round(v * a.family_scale)) for k, v in FAMILY_SIZES.items()}
+    report = write(a.out, SuiteConfig(a.dev_worlds, a.test_worlds, bench_limit=a.bench_limit, seed=a.seed,
+                                      family_sizes=sizes))
     for split, m in report.items():
         print(f"{split}: {m['n']} episodes {m['by_family']} skipped={sorted(m['skipped'])}")
 

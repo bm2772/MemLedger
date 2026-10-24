@@ -1,0 +1,121 @@
+"""Run the attack suite through eval/runner.py on all versions and print per-version and per-family tables.
+
+    python -m attacks.evaluate --split dev --guards lexical --llm fake --out results/attacks --run-id dev-lexical
+    python -m attacks.evaluate --split dev --limit-per-family 3 --llm openai --model qwen3:8b     # Ollama smoke test
+
+Writes <out>/<run_id>/summary.json (eval/runner.py) and <out>/<run_id>/families.json / families.md (this module), and the
+raw per-episode rows to <out>/raw/<run_id>/<version>.jsonl. Rates are x/n with Wilson 95% intervals and the rule-of-three
+bound when x = 0 (eval/metrics.py). "Attack success" is the per-episode oracle of attacks/oracle.py; "added delay" is
+the per-call median minus the baseline's, in ms.
+"""
+
+from __future__ import annotations
+
+import argparse
+import importlib.util
+import json
+import os
+from collections import Counter
+from datetime import UTC, datetime
+from pathlib import Path
+
+from attacks.oracle import by_family, overall
+from attacks.suite import SuiteConfig, build
+from eval.metrics import Rate
+from eval.runner import make_llm, run
+from eval.versions import VERSIONS
+from memledger.agent.episode import Episode
+
+
+def select(eps: list[Episode], limit_per_family: int | None, families: list[str] | None) -> list[Episode]:
+    seen: Counter = Counter()
+    out = []
+    for e in eps:
+        fam = e.meta["family"]
+        if families and fam not in families:
+            continue
+        if limit_per_family is not None and seen[fam] >= limit_per_family:
+            continue
+        seen[fam] += 1
+        out.append(e)
+    return out
+
+
+def _ms(x) -> str:
+    return "–" if x is None else f"{x:+.2f}"
+
+
+def _rate(d: dict | None) -> str:
+    return Rate(**d).text() if d else "–"
+
+
+def tables(episodes: list[Episode], rows: dict[str, list[dict]]) -> tuple[dict, str]:
+    """(JSON-able results, markdown) from the raw rows of each version."""
+    res: dict = {"overall": {}, "families": {}}
+    head = ("| version | attack success | leak rate | tamper detection | benign task accuracy | legit payment denied | "
+            "added write ms | added read ms | added gate ms |")
+    md = [head, "|---" * 9 + "|"]
+    base = None
+    for v, rs in rows.items():
+        o = overall(episodes, rs)
+        m = o["metrics"]
+        med = {op: m[f"{op}_ms"]["median"] for op in ("write", "read", "gate")}
+        base = base or med
+        added = {op: (None if med[op] is None or base[op] is None else med[op] - base[op]) for op in med}
+        res["overall"][v] = {"attack_success": o["attack_success"].__dict__, "leak_rate": m["leak_rate"],
+                             "tamper_detected": o["tamper_detected"].__dict__, "task_accuracy": m["task_accuracy"],
+                             "false_denial_rate": m["false_denial_rate"], "median_ms": med, "added_ms": added,
+                             "errors": m["error_rate"]["x"]}
+        md.append(f"| {v} | {o['attack_success'].text()} | {_rate(m['leak_rate'])} | {o['tamper_detected'].text()} | "
+                  f"{_rate(m['task_accuracy'])} | {_rate(m['false_denial_rate'])} | {_ms(added['write'])} | "
+                  f"{_ms(added['read'])} | {_ms(added['gate'])} |")
+        res["families"][v] = by_family(episodes, rs)
+    fams = sorted({k for v in res["families"].values() for k, d in v.items() if d["n_attack"]})
+    for title, key in (("Attack success per family (oracle of attacks/oracle.py):", "attack_success"),
+                       ("Leak rate per family (a marker the user may not see appeared in anything visible):", "leak")):
+        md += ["", title, "", "| family | n | " + " | ".join(rows) + " |", "|---" * (2 + len(rows)) + "|"]
+        for fam in fams:
+            n = next(res["families"][v][fam]["n_attack"] for v in rows if fam in res["families"][v])
+            md.append(f"| {fam} | {n} | " + " | ".join(_rate(res["families"][v].get(fam, {}).get(key)) for v in rows) + " |")
+    return res, "\n".join(md)
+
+
+def main(argv: list[str] | None = None) -> dict:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--split", choices=["dev", "test"], default="dev")
+    ap.add_argument("--versions", default=",".join(VERSIONS))
+    ap.add_argument("--limit-per-family", type=int)
+    ap.add_argument("--families", help="comma list, e.g. minja,db_tamper")
+    ap.add_argument("--no-benchmarks", action="store_true", help="skip downloaded benchmarks (default: use what exists)")
+    ap.add_argument("--llm", choices=["fake", "openai"], default="fake")
+    ap.add_argument("--model")
+    ap.add_argument("--base-url")
+    ap.add_argument("--guards", choices=["hf", "lexical", "auto"], default="lexical",
+                    help="auto = the Hugging Face checkers if transformers and torch import, else the lexical fallback")
+    ap.add_argument("--out", default="results/attacks")
+    ap.add_argument("--run-id", default=datetime.now(UTC).strftime("%Y%m%d-%H%M%S"))
+    ap.add_argument("--quiet", action="store_true")
+    a = ap.parse_args(argv)
+    cfg = SuiteConfig(benchmarks=[] if a.no_benchmarks else SuiteConfig().benchmarks)
+    eps, skipped = build(a.split, cfg)
+    eps = select(eps, a.limit_per_family, a.families.split(",") if a.families else None)
+    print(f"{len(eps)} episodes ({a.split}); skipped benchmarks: {sorted(skipped) or 'none'}", flush=True)
+    if a.guards == "auto":
+        a.guards = "hf" if importlib.util.find_spec("transformers") and importlib.util.find_spec("torch") else "lexical"
+        print(f"guards: {a.guards}" + ("" if a.guards == "hf" else " (transformers/torch not installed: lexical fallback)"))
+    os.environ["MEMLEDGER_GUARD_BACKEND"] = a.guards
+    versions = [v.strip() for v in a.versions.split(",") if v.strip()]
+    summary = run(eps, versions, a.out, a.run_id, make_llm(a.llm, a.model, a.base_url), backend=a.guards,
+                  episodes_label=f"attacks.suite:{a.split}", split=a.split, progress=not a.quiet)
+    raw = Path(a.out) / "raw" / a.run_id
+    rows = {v: [json.loads(x) for x in (raw / f"{v}.jsonl").read_text().splitlines()] for v in versions}
+    res, md = tables(eps, rows)
+    d = Path(a.out) / a.run_id
+    (d / "families.json").write_text(json.dumps(res, indent=1, default=str) + "\n")
+    (d / "families.md").write_text(md + "\n")
+    print(md)
+    return summary
+
+
+if __name__ == "__main__":
+    main()

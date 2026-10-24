@@ -12,6 +12,7 @@ from collections import deque
 
 import pytest
 
+from attacks.tamper import drop_triggers  # shared with the db_tamper attack family
 from memledger.core.factory import build_service
 from memledger.core.types import Session, SourceKind, Status, WriteProposal
 from memledger.registry import Registry
@@ -190,11 +191,6 @@ def test_session_clearance_not_taken_from_text_in_retrieve():
 
 # ---------------------------------------------------------------- (d) tamper detection
 TAMPERS = ["claim_text", "source_content", "recorded_at", "derivation_edge", "hash_log_row"]
-
-
-def drop_triggers(svc) -> None:
-    for (name,) in svc.store.conn.execute("SELECT name FROM sqlite_master WHERE type='trigger'").fetchall():
-        svc.store.conn.execute(f"DROP TRIGGER {name}")
 
 
 def apply_tamper(pop: Pop, kind: str, cid: str) -> set[str]:

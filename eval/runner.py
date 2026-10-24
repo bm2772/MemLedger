@@ -18,6 +18,7 @@ from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
 
+from attacks.tamper import wrap_service
 from eval.llm import GullibleLLM, MeteredLLM
 from eval.metrics import accuracy_loss, compute
 from eval.versions import VERSIONS, Version, build, guard_backend, load_guard_models, resolve_version
@@ -140,15 +141,18 @@ def run_one(ep: Episode, v: Version, llm, models: dict, backend: str, max_steps:
     built = build(v, ep.registry, models, on_timing=lambda op, ms: timings[op].append(round(ms, 3)), backend=backend)
     before = (llm.meter.calls, llm.meter.prompt_tokens, llm.meter.completion_tokens)
     res, error = None, None
+    memory = wrap_service(ep, built.service)  # db_tamper episodes: edit storage after the seeds (attacks/tamper.py)
     t0 = time.perf_counter()
     try:
-        res = run_episode(ep, built.service, llm, registry_lookup=built.registry.get if built.registry else None,
+        res = run_episode(ep, memory, llm, registry_lookup=built.registry.get if built.registry else None,
                           gate=built.service.gate, max_steps=max_steps)
     except Exception as e:  # noqa: BLE001 - a broken episode must not kill a long run; it is counted as an error
         error = f"{type(e).__name__}: {e}"[:500]
     wall = time.perf_counter() - t0
     row = record(ep, v.name, res, built.service, error)
     row["wall_s"] = round(wall, 3)
+    if hasattr(memory, "report"):
+        row["tamper"] = memory.report()
     row["ms"] = dict(timings)
     row["llm"] = {"calls": llm.meter.calls - before[0], "prompt_tokens": llm.meter.prompt_tokens - before[1],
                   "completion_tokens": llm.meter.completion_tokens - before[2]}
