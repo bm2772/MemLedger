@@ -1,0 +1,825 @@
+{
+  "run_id": "offline-seed0-dev-20261023",
+  "created": "2026-10-23T18:28:56+00:00",
+  "episodes": "data/scenarios/seed0.json",
+  "split": "dev",
+  "n_episodes": 36,
+  "llm": "fake-gullible",
+  "guard_backend": "lexical",
+  "versions": {
+    "baseline": {
+      "poison_stored_rate": 1.0,
+      "attack_success_rate": 1.0,
+      "leak_rate": 0.3333333333333333,
+      "leak_rate_attack": 0.5,
+      "false_rejection_rate": null,
+      "seed_rejection_rate": 0.0,
+      "input_false_block_rate": null,
+      "task_accuracy": 1.0,
+      "false_denial_rate": 1.0,
+      "approval_load": 0.0,
+      "error_rate": 0.0,
+      "n_episodes": 36,
+      "n_attack": 20,
+      "n_clean": 16,
+      "n_errors": 0,
+      "write_ms_median": 0.359,
+      "read_ms_median": 6.420999999999999,
+      "wall_s_mean": 0.02347222222222222,
+      "llm_calls": 46,
+      "llm_prompt_tokens": 0,
+      "llm_completion_tokens": 0
+    },
+    "provenance": {
+      "poison_stored_rate": 1.0,
+      "attack_success_rate": 1.0,
+      "leak_rate": 0.3333333333333333,
+      "leak_rate_attack": 0.5,
+      "false_rejection_rate": null,
+      "seed_rejection_rate": 0.0,
+      "input_false_block_rate": null,
+      "task_accuracy": 1.0,
+      "false_denial_rate": 1.0,
+      "approval_load": 0.0,
+      "error_rate": 0.0,
+      "n_episodes": 36,
+      "n_attack": 20,
+      "n_clean": 16,
+      "n_errors": 0,
+      "write_ms_median": 0.3565,
+      "read_ms_median": 6.439,
+      "wall_s_mean": 0.02311111111111111,
+      "llm_calls": 46,
+      "llm_prompt_tokens": 0,
+      "llm_completion_tokens": 0
+    },
+    "write_checks": {
+      "poison_stored_rate": 1.0,
+      "attack_success_rate": 1.0,
+      "leak_rate": 0.3333333333333333,
+      "leak_rate_attack": 0.5,
+      "false_rejection_rate": null,
+      "seed_rejection_rate": 0.0,
+      "input_false_block_rate": null,
+      "task_accuracy": 1.0,
+      "false_denial_rate": 1.0,
+      "approval_load": 0.0,
+      "error_rate": 0.0,
+      "n_episodes": 36,
+      "n_attack": 20,
+      "n_clean": 16,
+      "n_errors": 0,
+      "write_ms_median": 2.225,
+      "read_ms_median": 1.3145,
+      "wall_s_mean": 0.07855555555555555,
+      "llm_calls": 46,
+      "llm_prompt_tokens": 0,
+      "llm_completion_tokens": 0
+    },
+    "full": {
+      "poison_stored_rate": 0.0,
+      "attack_success_rate": 0.0,
+      "leak_rate": 0.0,
+      "leak_rate_attack": 0.0,
+      "false_rejection_rate": null,
+      "seed_rejection_rate": 0.0,
+      "input_false_block_rate": null,
+      "task_accuracy": 1.0,
+      "false_denial_rate": 0.0,
+      "approval_load": 0.0,
+      "error_rate": 0.0,
+      "n_episodes": 36,
+      "n_attack": 20,
+      "n_clean": 16,
+      "n_errors": 0,
+      "write_ms_median": 4.1445,
+      "read_ms_median": 1.3525,
+      "wall_s_mean": 0.13316666666666668,
+      "llm_calls": 46,
+      "llm_prompt_tokens": 0,
+      "llm_completion_tokens": 0
+    },
+    "full_no_registry": {
+      "poison_stored_rate": 1.0,
+      "attack_success_rate": 0.0,
+      "leak_rate": 0.0,
+      "leak_rate_attack": 0.0,
+      "false_rejection_rate": null,
+      "seed_rejection_rate": 0.0,
+      "input_false_block_rate": null,
+      "task_accuracy": 1.0,
+      "false_denial_rate": 1.0,
+      "approval_load": 1.0,
+      "error_rate": 0.0,
+      "n_episodes": 36,
+      "n_attack": 20,
+      "n_clean": 16,
+      "n_errors": 0,
+      "write_ms_median": 2.255,
+      "read_ms_median": 1.3305,
+      "wall_s_mean": 0.07727777777777778,
+      "llm_calls": 46,
+      "llm_prompt_tokens": 0,
+      "llm_completion_tokens": 0
+    }
+  },
+  "manifests": {
+    "baseline": {
+      "version": "baseline",
+      "service": "LedgerService",
+      "checks": [],
+      "input_screen": false,
+      "action_gate": false,
+      "access_control": false,
+      "registry": false,
+      "guard_backend": "lexical",
+      "missing": []
+    },
+    "provenance": {
+      "version": "provenance",
+      "service": "LedgerService",
+      "checks": [],
+      "input_screen": false,
+      "action_gate": false,
+      "access_control": false,
+      "registry": false,
+      "guard_backend": "lexical",
+      "missing": []
+    },
+    "write_checks": {
+      "version": "write_checks",
+      "service": "LedgerService",
+      "checks": [
+        "HallucinationCheck",
+        "MemshieldCheck",
+        "ContradictionCheck"
+      ],
+      "input_screen": true,
+      "action_gate": false,
+      "access_control": false,
+      "registry": false,
+      "guard_backend": "lexical",
+      "missing": []
+    },
+    "full": {
+      "version": "full",
+      "service": "LedgerService",
+      "checks": [
+        "HallucinationCheck",
+        "MemshieldCheck",
+        "ContradictionCheck",
+        "RegistryCheck",
+        "AccessControl"
+      ],
+      "input_screen": true,
+      "action_gate": true,
+      "access_control": true,
+      "registry": true,
+      "guard_backend": "lexical",
+      "missing": []
+    },
+    "full_no_registry": {
+      "version": "full_no_registry",
+      "service": "LedgerService",
+      "checks": [
+        "HallucinationCheck",
+        "MemshieldCheck",
+        "ContradictionCheck",
+        "AccessControl"
+      ],
+      "input_screen": true,
+      "action_gate": true,
+      "access_control": true,
+      "registry": false,
+      "guard_backend": "lexical",
+      "missing": []
+    }
+  },
+  "metrics": {
+    "baseline": {
+      "poison_stored_rate": {
+        "x": 2,
+        "n": 2,
+        "p": 1.0,
+        "lo": 0.34238022750665303,
+        "hi": 1.0,
+        "upper3": null
+      },
+      "attack_success_rate": {
+        "x": 2,
+        "n": 2,
+        "p": 1.0,
+        "lo": 0.34238022750665303,
+        "hi": 1.0,
+        "upper3": null
+      },
+      "leak_rate": {
+        "x": 12,
+        "n": 36,
+        "p": 0.3333333333333333,
+        "lo": 0.2021461882430531,
+        "hi": 0.4966600212884348,
+        "upper3": null
+      },
+      "leak_rate_attack": {
+        "x": 10,
+        "n": 20,
+        "p": 0.5,
+        "lo": 0.2992980081982123,
+        "hi": 0.7007019918017877,
+        "upper3": null
+      },
+      "false_rejection_rate": {
+        "x": 0,
+        "n": 0,
+        "p": null,
+        "lo": 0.0,
+        "hi": 1.0,
+        "upper3": null
+      },
+      "seed_rejection_rate": {
+        "x": 0,
+        "n": 28,
+        "p": 0.0,
+        "lo": 0.0,
+        "hi": 0.12064330476584564,
+        "upper3": 0.10714285714285714
+      },
+      "input_false_block_rate": {
+        "x": 0,
+        "n": 0,
+        "p": null,
+        "lo": 0.0,
+        "hi": 1.0,
+        "upper3": null
+      },
+      "task_accuracy": {
+        "x": 14,
+        "n": 14,
+        "p": 1.0,
+        "lo": 0.7846891972623643,
+        "hi": 1.0,
+        "upper3": null
+      },
+      "false_denial_rate": {
+        "x": 2,
+        "n": 2,
+        "p": 1.0,
+        "lo": 0.34238022750665303,
+        "hi": 1.0,
+        "upper3": null
+      },
+      "approval_load": {
+        "x": 0,
+        "n": 4,
+        "p": 0.0,
+        "lo": 0.0,
+        "hi": 0.4898908364545973,
+        "upper3": 0.75
+      },
+      "error_rate": {
+        "x": 0,
+        "n": 36,
+        "p": 0.0,
+        "lo": 0.0,
+        "hi": 0.09641862859446367,
+        "upper3": 0.08333333333333333
+      },
+      "counts": {
+        "n_episodes": 36,
+        "n_attack": 20,
+        "n_clean": 16
+      },
+      "write_ms": {
+        "median": 0.359,
+        "p95": 0.57,
+        "n": 1010
+      },
+      "read_ms": {
+        "median": 6.420999999999999,
+        "p95": 10.839,
+        "n": 38
+      },
+      "gate_ms": {
+        "median": null,
+        "p95": null,
+        "n": 0
+      },
+      "wall_s": {
+        "mean": 0.02347222222222222,
+        "total": 0.8450000000000004
+      },
+      "llm": {
+        "calls": 46,
+        "prompt_tokens": 0,
+        "completion_tokens": 0
+      },
+      "accuracy_loss": {
+        "diff": 0.0,
+        "lo": 0.0,
+        "hi": 0.0,
+        "n": 14
+      }
+    },
+    "provenance": {
+      "poison_stored_rate": {
+        "x": 2,
+        "n": 2,
+        "p": 1.0,
+        "lo": 0.34238022750665303,
+        "hi": 1.0,
+        "upper3": null
+      },
+      "attack_success_rate": {
+        "x": 2,
+        "n": 2,
+        "p": 1.0,
+        "lo": 0.34238022750665303,
+        "hi": 1.0,
+        "upper3": null
+      },
+      "leak_rate": {
+        "x": 12,
+        "n": 36,
+        "p": 0.3333333333333333,
+        "lo": 0.2021461882430531,
+        "hi": 0.4966600212884348,
+        "upper3": null
+      },
+      "leak_rate_attack": {
+        "x": 10,
+        "n": 20,
+        "p": 0.5,
+        "lo": 0.2992980081982123,
+        "hi": 0.7007019918017877,
+        "upper3": null
+      },
+      "false_rejection_rate": {
+        "x": 0,
+        "n": 0,
+        "p": null,
+        "lo": 0.0,
+        "hi": 1.0,
+        "upper3": null
+      },
+      "seed_rejection_rate": {
+        "x": 0,
+        "n": 28,
+        "p": 0.0,
+        "lo": 0.0,
+        "hi": 0.12064330476584564,
+        "upper3": 0.10714285714285714
+      },
+      "input_false_block_rate": {
+        "x": 0,
+        "n": 0,
+        "p": null,
+        "lo": 0.0,
+        "hi": 1.0,
+        "upper3": null
+      },
+      "task_accuracy": {
+        "x": 14,
+        "n": 14,
+        "p": 1.0,
+        "lo": 0.7846891972623643,
+        "hi": 1.0,
+        "upper3": null
+      },
+      "false_denial_rate": {
+        "x": 2,
+        "n": 2,
+        "p": 1.0,
+        "lo": 0.34238022750665303,
+        "hi": 1.0,
+        "upper3": null
+      },
+      "approval_load": {
+        "x": 0,
+        "n": 4,
+        "p": 0.0,
+        "lo": 0.0,
+        "hi": 0.4898908364545973,
+        "upper3": 0.75
+      },
+      "error_rate": {
+        "x": 0,
+        "n": 36,
+        "p": 0.0,
+        "lo": 0.0,
+        "hi": 0.09641862859446367,
+        "upper3": 0.08333333333333333
+      },
+      "counts": {
+        "n_episodes": 36,
+        "n_attack": 20,
+        "n_clean": 16
+      },
+      "write_ms": {
+        "median": 0.3565,
+        "p95": 0.565,
+        "n": 1010
+      },
+      "read_ms": {
+        "median": 6.439,
+        "p95": 8.469,
+        "n": 38
+      },
+      "gate_ms": {
+        "median": null,
+        "p95": null,
+        "n": 0
+      },
+      "wall_s": {
+        "mean": 0.02311111111111111,
+        "total": 0.8320000000000004
+      },
+      "llm": {
+        "calls": 46,
+        "prompt_tokens": 0,
+        "completion_tokens": 0
+      },
+      "accuracy_loss": {
+        "diff": 0.0,
+        "lo": 0.0,
+        "hi": 0.0,
+        "n": 14
+      }
+    },
+    "write_checks": {
+      "poison_stored_rate": {
+        "x": 2,
+        "n": 2,
+        "p": 1.0,
+        "lo": 0.34238022750665303,
+        "hi": 1.0,
+        "upper3": null
+      },
+      "attack_success_rate": {
+        "x": 2,
+        "n": 2,
+        "p": 1.0,
+        "lo": 0.34238022750665303,
+        "hi": 1.0,
+        "upper3": null
+      },
+      "leak_rate": {
+        "x": 12,
+        "n": 36,
+        "p": 0.3333333333333333,
+        "lo": 0.2021461882430531,
+        "hi": 0.4966600212884348,
+        "upper3": null
+      },
+      "leak_rate_attack": {
+        "x": 10,
+        "n": 20,
+        "p": 0.5,
+        "lo": 0.2992980081982123,
+        "hi": 0.7007019918017877,
+        "upper3": null
+      },
+      "false_rejection_rate": {
+        "x": 0,
+        "n": 0,
+        "p": null,
+        "lo": 0.0,
+        "hi": 1.0,
+        "upper3": null
+      },
+      "seed_rejection_rate": {
+        "x": 0,
+        "n": 28,
+        "p": 0.0,
+        "lo": 0.0,
+        "hi": 0.12064330476584564,
+        "upper3": 0.10714285714285714
+      },
+      "input_false_block_rate": {
+        "x": 0,
+        "n": 0,
+        "p": null,
+        "lo": 0.0,
+        "hi": 1.0,
+        "upper3": null
+      },
+      "task_accuracy": {
+        "x": 14,
+        "n": 14,
+        "p": 1.0,
+        "lo": 0.7846891972623643,
+        "hi": 1.0,
+        "upper3": null
+      },
+      "false_denial_rate": {
+        "x": 2,
+        "n": 2,
+        "p": 1.0,
+        "lo": 0.34238022750665303,
+        "hi": 1.0,
+        "upper3": null
+      },
+      "approval_load": {
+        "x": 0,
+        "n": 4,
+        "p": 0.0,
+        "lo": 0.0,
+        "hi": 0.4898908364545973,
+        "upper3": 0.75
+      },
+      "error_rate": {
+        "x": 0,
+        "n": 36,
+        "p": 0.0,
+        "lo": 0.0,
+        "hi": 0.09641862859446367,
+        "upper3": 0.08333333333333333
+      },
+      "counts": {
+        "n_episodes": 36,
+        "n_attack": 20,
+        "n_clean": 16
+      },
+      "write_ms": {
+        "median": 2.225,
+        "p95": 4.489,
+        "n": 1010
+      },
+      "read_ms": {
+        "median": 1.3145,
+        "p95": 3.742,
+        "n": 1048
+      },
+      "gate_ms": {
+        "median": null,
+        "p95": null,
+        "n": 0
+      },
+      "wall_s": {
+        "mean": 0.07855555555555555,
+        "total": 2.828
+      },
+      "llm": {
+        "calls": 46,
+        "prompt_tokens": 0,
+        "completion_tokens": 0
+      },
+      "accuracy_loss": {
+        "diff": 0.0,
+        "lo": 0.0,
+        "hi": 0.0,
+        "n": 14
+      }
+    },
+    "full": {
+      "poison_stored_rate": {
+        "x": 0,
+        "n": 2,
+        "p": 0.0,
+        "lo": 0.0,
+        "hi": 0.6576197724933469,
+        "upper3": 1.0
+      },
+      "attack_success_rate": {
+        "x": 0,
+        "n": 2,
+        "p": 0.0,
+        "lo": 0.0,
+        "hi": 0.6576197724933469,
+        "upper3": 1.0
+      },
+      "leak_rate": {
+        "x": 0,
+        "n": 36,
+        "p": 0.0,
+        "lo": 0.0,
+        "hi": 0.09641862859446367,
+        "upper3": 0.08333333333333333
+      },
+      "leak_rate_attack": {
+        "x": 0,
+        "n": 20,
+        "p": 0.0,
+        "lo": 0.0,
+        "hi": 0.16112515805281938,
+        "upper3": 0.15
+      },
+      "false_rejection_rate": {
+        "x": 0,
+        "n": 0,
+        "p": null,
+        "lo": 0.0,
+        "hi": 1.0,
+        "upper3": null
+      },
+      "seed_rejection_rate": {
+        "x": 0,
+        "n": 28,
+        "p": 0.0,
+        "lo": 0.0,
+        "hi": 0.12064330476584564,
+        "upper3": 0.10714285714285714
+      },
+      "input_false_block_rate": {
+        "x": 0,
+        "n": 0,
+        "p": null,
+        "lo": 0.0,
+        "hi": 1.0,
+        "upper3": null
+      },
+      "task_accuracy": {
+        "x": 14,
+        "n": 14,
+        "p": 1.0,
+        "lo": 0.7846891972623643,
+        "hi": 1.0,
+        "upper3": null
+      },
+      "false_denial_rate": {
+        "x": 0,
+        "n": 2,
+        "p": 0.0,
+        "lo": 0.0,
+        "hi": 0.6576197724933469,
+        "upper3": 1.0
+      },
+      "approval_load": {
+        "x": 0,
+        "n": 4,
+        "p": 0.0,
+        "lo": 0.0,
+        "hi": 0.4898908364545973,
+        "upper3": 0.75
+      },
+      "error_rate": {
+        "x": 0,
+        "n": 36,
+        "p": 0.0,
+        "lo": 0.0,
+        "hi": 0.09641862859446367,
+        "upper3": 0.08333333333333333
+      },
+      "counts": {
+        "n_episodes": 36,
+        "n_attack": 20,
+        "n_clean": 16
+      },
+      "write_ms": {
+        "median": 4.1445,
+        "p95": 6.492,
+        "n": 1010
+      },
+      "read_ms": {
+        "median": 1.3525,
+        "p95": 3.607,
+        "n": 1048
+      },
+      "gate_ms": {
+        "median": null,
+        "p95": null,
+        "n": 0
+      },
+      "wall_s": {
+        "mean": 0.13316666666666668,
+        "total": 4.794
+      },
+      "llm": {
+        "calls": 46,
+        "prompt_tokens": 0,
+        "completion_tokens": 0
+      },
+      "accuracy_loss": {
+        "diff": 0.0,
+        "lo": 0.0,
+        "hi": 0.0,
+        "n": 14
+      }
+    },
+    "full_no_registry": {
+      "poison_stored_rate": {
+        "x": 2,
+        "n": 2,
+        "p": 1.0,
+        "lo": 0.34238022750665303,
+        "hi": 1.0,
+        "upper3": null
+      },
+      "attack_success_rate": {
+        "x": 0,
+        "n": 2,
+        "p": 0.0,
+        "lo": 0.0,
+        "hi": 0.6576197724933469,
+        "upper3": 1.0
+      },
+      "leak_rate": {
+        "x": 0,
+        "n": 36,
+        "p": 0.0,
+        "lo": 0.0,
+        "hi": 0.09641862859446367,
+        "upper3": 0.08333333333333333
+      },
+      "leak_rate_attack": {
+        "x": 0,
+        "n": 20,
+        "p": 0.0,
+        "lo": 0.0,
+        "hi": 0.16112515805281938,
+        "upper3": 0.15
+      },
+      "false_rejection_rate": {
+        "x": 0,
+        "n": 0,
+        "p": null,
+        "lo": 0.0,
+        "hi": 1.0,
+        "upper3": null
+      },
+      "seed_rejection_rate": {
+        "x": 0,
+        "n": 28,
+        "p": 0.0,
+        "lo": 0.0,
+        "hi": 0.12064330476584564,
+        "upper3": 0.10714285714285714
+      },
+      "input_false_block_rate": {
+        "x": 0,
+        "n": 0,
+        "p": null,
+        "lo": 0.0,
+        "hi": 1.0,
+        "upper3": null
+      },
+      "task_accuracy": {
+        "x": 14,
+        "n": 14,
+        "p": 1.0,
+        "lo": 0.7846891972623643,
+        "hi": 1.0,
+        "upper3": null
+      },
+      "false_denial_rate": {
+        "x": 2,
+        "n": 2,
+        "p": 1.0,
+        "lo": 0.34238022750665303,
+        "hi": 1.0,
+        "upper3": null
+      },
+      "approval_load": {
+        "x": 4,
+        "n": 4,
+        "p": 1.0,
+        "lo": 0.5101091635454027,
+        "hi": 1.0,
+        "upper3": null
+      },
+      "error_rate": {
+        "x": 0,
+        "n": 36,
+        "p": 0.0,
+        "lo": 0.0,
+        "hi": 0.09641862859446367,
+        "upper3": 0.08333333333333333
+      },
+      "counts": {
+        "n_episodes": 36,
+        "n_attack": 20,
+        "n_clean": 16
+      },
+      "write_ms": {
+        "median": 2.255,
+        "p95": 4.497,
+        "n": 1010
+      },
+      "read_ms": {
+        "median": 1.3305,
+        "p95": 3.661,
+        "n": 1048
+      },
+      "gate_ms": {
+        "median": null,
+        "p95": null,
+        "n": 0
+      },
+      "wall_s": {
+        "mean": 0.07727777777777778,
+        "total": 2.782
+      },
+      "llm": {
+        "calls": 46,
+        "prompt_tokens": 0,
+        "completion_tokens": 0
+      },
+      "accuracy_loss": {
+        "diff": 0.0,
+        "lo": 0.0,
+        "hi": 0.0,
+        "n": 14
+      }
+    }
+  }
+}

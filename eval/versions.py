@@ -1,25 +1,25 @@
-"""The five versions compared on slide 17 (Figure 6), as config flags over one service.
+"""The five versions compared on slide 17 (Figure 6), built by M1's memledger.core.factory.build_service.
 
-baseline          plain retrieval memory (MockMemoryService until M1 ships a plain mode of LedgerService)
-provenance        + provenance graph and JTMS trust (LedgerService, no checks)
-write_checks      + input screen (step 1) and write checks: hallucination, contradiction, memshield, registry match
-full              + access control and action gate, high-risk params bound from the registry
-full_no_registry  full without registry match and registry binding, to isolate the registry's effect
+baseline          plain retrieval memory (LedgerService with nothing switched on)
+provenance        + provenance graph and JTMS trust
+write_checks      + input screen (step 1) and write checks: hallucination, memshield, contradiction
+full              + registry match, access control and action gate; high-risk params bound from the registry (I10)
+full_no_registry  full without the registry, to isolate its effect
 
-Components are resolved lazily from "module:attr" paths so the runner works before M1/M2 code lands. A component a
-version asks for but that cannot be imported is recorded in the manifest as missing (never silently faked);
---strict turns that into an error. Override paths with a JSON file (see DEFAULT_COMPONENTS).
+Guards use the backend named by $MEMLEDGER_GUARD_BACKEND: "lexical" (code-only fallbacks, CI and laptops) or "hf"
+(the real models; needs the [models] extra). The HF models are loaded once per run and shared by all episodes.
 """
 
 from __future__ import annotations
 
-import importlib
-import inspect
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from memledger.core.interfaces import ActionGate, InputScreen, MemoryService
+from memledger.core.factory import FLAGS, build_service
+from memledger.core.service import LedgerService
+from memledger.registry import Registry, set_default_registry
 
 
 @dataclass(frozen=True)
@@ -41,37 +41,6 @@ VERSIONS: dict[str, Version] = {
     "full_no_registry": Version("full_no_registry", True, True, True, True, True, False),
 }
 
-# Paths M1/M2 are expected to provide; agree exact names with them and override via --components until merged.
-DEFAULT_COMPONENTS: dict[str, Any] = {
-    "baseline_service": "memledger.core.mock:MockMemoryService",
-    "service": "memledger.core.service:LedgerService",
-    "checks": {
-        "hallucination": "memledger.guards.hallucination:HallucinationCheck",
-        "memshield": "memledger.guards.memshield:MemshieldCheck",
-        "contradiction": "memledger.guards.contradiction:ContradictionCheck",
-    },
-    "registry_check": "memledger.guards.registry_match:RegistryCheck",
-    "input_screen": "memledger.guards.screen:InputScreen",
-    "access_control": "memledger.policy.access:AccessControl",
-    "action_gate": "memledger.policy.gate:ActionGate",
-    "registry_binder": "memledger.registry.binding:bind_params",  # (tool, params, session) -> params
-}
-
-Binder = Callable[[str, dict, Any], dict]
-
-
-class MissingComponent(RuntimeError):
-    pass
-
-
-@dataclass
-class Stack:
-    service: MemoryService
-    screen: InputScreen | None
-    gate: ActionGate | None
-    binder: Binder | None
-    manifest: dict
-
 
 def resolve_version(name: str) -> Version:
     key = name.lstrip("+")
@@ -80,70 +49,42 @@ def resolve_version(name: str) -> Version:
     return VERSIONS[key]
 
 
-def _load(path: str | None) -> Any:
-    if not path:
-        raise ImportError("no path configured")
-    mod, _, attr = path.partition(":")
-    return getattr(importlib.import_module(mod), attr)
+def guard_backend() -> str:
+    return os.environ.get("MEMLEDGER_GUARD_BACKEND", "hf").strip().lower()
 
 
-def _instance(obj: Any) -> Any:
-    """Classes are instantiated with no args; functions/instances are used as-is."""
-    return obj() if inspect.isclass(obj) else obj
+def load_guard_models(backend: str | None = None) -> dict[str, Any]:
+    """Model callables for the factory's `fakes` slots; {} = the factory's lexical defaults."""
+    if (backend or guard_backend()) != "hf":
+        return {}
+    from memledger.guards.models import default_injection_classifier, default_nli, default_support_scorer
+
+    return {"scorer": default_support_scorer(), "nli": default_nli(), "injection": default_injection_classifier()}
 
 
-def build_stack(version: str | Version, components: dict | None = None, strict: bool = False) -> Stack:
-    """Fresh service + guards for one episode (episodes never share memory)."""
+@dataclass
+class Built:
+    service: LedgerService
+    registry: Registry | None  # also the lookup send_payment binds from (I10); None = model-supplied params
+    manifest: dict
+
+
+def build(version: str | Version, episode_registry: dict, models: dict[str, Any] | None = None,
+          on_timing: Callable[[str, float], None] | None = None, backend: str | None = None) -> Built:
+    """Fresh service for one episode (episodes never share memory), with that episode's signed registry."""
     v = version if isinstance(version, Version) else resolve_version(version)
-    comps = {**DEFAULT_COMPONENTS, **(components or {})}
-    active: list[str] = []
-    missing: list[str] = []
+    reg = Registry.from_mapping(episode_registry) if v.registry else None
+    set_default_registry(reg)  # bind_params' default: never a previous episode's registry
+    svc = build_service(v.name, registry=reg, on_timing=on_timing, **(models or {}))
+    manifest = {"version": v.name, "service": type(svc).__name__, "checks": [type(c).__name__ for c in svc.checks],
+                "input_screen": svc.input_screen is not None, "action_gate": svc.gate is not None,
+                "access_control": svc.access is not None, "registry": reg is not None,
+                "guard_backend": backend or guard_backend(), "missing": []}
+    return Built(svc, reg, manifest)
 
-    def get(key: str, path: str | None) -> Any:
-        try:
-            obj = _instance(_load(path))
-        except (ImportError, AttributeError) as e:
-            if strict:
-                raise MissingComponent(f"{v.name}: {key} ({path}) unavailable: {e}") from e
-            missing.append(key)
-            return None
-        active.append(key)
-        return obj
 
-    checks = []
-    if v.write_checks:
-        for name, path in comps["checks"].items():
-            if (c := get(f"checks.{name}", path)) is not None:
-                checks.append(c)
-    if v.registry and v.write_checks and (c := get("registry_check", comps["registry_check"])) is not None:
-        checks.append(c)
-
-    access = get("access_control", comps["access_control"]) if v.access_control else None
-    service = None
-    if v.provenance:
-        try:
-            cls = _load(comps["service"])
-        except (ImportError, AttributeError) as e:
-            if strict:
-                raise MissingComponent(f"{v.name}: service unavailable: {e}") from e
-            missing.append("service")
-        else:
-            params = inspect.signature(cls).parameters
-            kw = {"checks": checks} if "checks" in params else {}
-            if access is not None and "access" in params:
-                kw["access"] = access  # read filter (step 6); also joins the write checks
-            service = cls(**kw)
-            active.append("service")
-    if service is None:
-        service = _instance(_load(comps["baseline_service"]))
-
-    screen = get("input_screen", comps["input_screen"]) if v.input_screen else None
-    gate = get("action_gate", comps["action_gate"]) if v.action_gate else None
-    binder = get("registry_binder", comps["registry_binder"]) if v.registry and v.action_gate else None
-    from memledger.guards import attach_all  # checks, gate and access control get the service they query
-
-    attach_all([*checks, gate, access], service)
-
-    manifest = {"version": v.name, "service": type(service).__name__, "checks": [type(c).__name__ for c in checks],
-                "active": active, "missing": missing, "degraded": bool(missing)}
-    return Stack(service, screen, gate, binder, manifest)
+def check_flags() -> None:
+    """The eval flags and M1's factory must describe the same five versions."""
+    assert set(FLAGS) == set(VERSIONS)
+    for name, v in VERSIONS.items():
+        assert FLAGS[name] == (v.write_checks, v.input_screen, v.access_control, v.action_gate, v.registry), name

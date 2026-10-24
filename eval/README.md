@@ -1,33 +1,36 @@
-# eval/ — 5-version runner and metrics (owner: M4)
+# eval/ — 5-version runner, metrics and report (owner: M4)
+
+Episodes use the shared schema v1, `memledger.agent.episode` (M3). Each episode runs through M3's
+`memledger.agent.runner.run_episode` (seeds first, then ingest / write / retrieve / task / tool / flag) on a fresh
+`LedgerService` from M1's `memledger.core.factory.build_service`, one per version.
 
 ```bash
-python -m eval.runner --episodes eval/fixtures/smoke.jsonl --versions baseline --run-id my-run
-python -m eval.runner --episodes <M3 set>.jsonl --split dev --versions baseline,provenance,write_checks,full,full_no_registry
+python -m scenarios.generator --seed 0 --out data/scenarios/seed0.json          # M3's multi-team world
+# offline (no models): fooled fake LLM + lexical guards — pipeline check, not results
+python -m eval.runner --episodes data/scenarios/seed0.json --split dev --llm fake --guards lexical
+# real: qwen3:8b on Ollama (thinking switched off automatically) + HF checkers
+python -m eval.runner --episodes data/scenarios/seed0.json --split dev --llm openai --model qwen3:8b --guards hf
+# Brev: vLLM serves the model as "main" (infra/brev_setup.sh)
+python -m eval.runner ... --llm openai --model main --base-url http://localhost:8000/v1 --guards hf
+python -m eval.report results/<run_id>/summary.json        # -> docs/results.md
 ```
-Output: `results/raw/<run_id>/<version>.jsonl` (per episode, gitignored — copy off Brev before stopping) and
-`results/<run_id>/summary.{json,md}` (commit these).
+Output: `results/raw/<run_id>/<version>.jsonl` (one record per episode; gitignored — copy it off Brev before
+stopping) and `results/<run_id>/summary.json` (commit it). `--categories fake_fact,payment` and `--limit` select subsets.
 
 | File | What |
 |---|---|
-| `episode.py` | Episode format the runner consumes (docstring = the spec M3's generators/loaders should emit) |
-| `versions.py` | The five versions as flags; resolves M1/M2 components lazily from `module:attr` paths |
-| `runner.py` | Scripted replay agent + recording `Env`; per-episode records and a point-estimate summary |
-| `metrics.md` | Every metric on slides 18–19 and properties I1–I10 with exact formulas |
-| `fixtures/smoke.jsonl` | 5 hand-written episodes (slide 5 Acme attack, repetition flood, cross-team canary, 2 clean) — a smoke test, **not** the benchmark |
+| `versions.py` | The five versions as flags (kept in sync with M1's factory by `check_flags()`), per-episode signed registry, HF guard models loaded once per run |
+| `runner.py` | Plays episodes, builds per-episode records (writes, ingests, retrievals, tasks, tool calls, leaks, timings, wall time, LLM calls/tokens) |
+| `llm.py` | `MeteredLLM` (OpenAI-compatible, counts tokens, qwen3 thinking off) and `GullibleLLM` (offline fooled model) |
+| `metrics.py` | Rates with 95% Wilson intervals, rule-of-three bound, paired bootstrap for accuracy loss |
+| `report.py` | `docs/results.md`: tables per version + slide-claim traceability; offline runs are labelled PRELIMINARY |
+| `metrics.md` | Every metric on slides 18–19 and I1–I10 with exact formulas, and the record fields each one reads |
+| `fixtures/smoke_v1.jsonl` | 8 hand-written v1 episodes (scripted Acme attack, flood, cross-team, same-team clearance canary, task-based fake fact and recall). Smoke test, not the benchmark |
+| `fixtures/smoke.jsonl` | Pre-v1 copy kept only for M3's `scenarios/convert_v0.py` test; delete together with it |
 
-## Honest degradation
-A version asks for components (e.g. `full` needs M1's `LedgerService`, M2's checks, input screen, action gate and
-registry binder). Anything that cannot be imported yet is listed under `missing` in the manifest, every record of
-that run carries `degraded: true`, and the summary table shows it. Nothing is stubbed in its place, so a degraded
-`full` run looks like the baseline rather than pretending to be protected. Use `--strict` for the real runs.
+Guard backend: `--guards` or `$MEMLEDGER_GUARD_BACKEND` = `hf` (default; needs `pip install -e ".[models]"`,
+Prompt Guard 2 is gated — `MEMLEDGER_PROMPT_GUARD_MODEL=protectai/deberta-v3-base-prompt-injection-v2` avoids it) or
+`lexical` (code-only fallbacks). The summary and `docs/results.md` record which backend and LLM were used.
 
-## What M1 / M2 / M3 need to provide (default paths in `versions.DEFAULT_COMPONENTS`; override with `--components cfg.json`)
-- **M1**: `memledger.core.service:LedgerService(checks=[...])` — already works on `m1/trust-retrieval`
-  (checked in a local merge). Wanted: a plain mode without trust/quarantine so `baseline` uses the same retriever
-  (today `baseline` = `MockMemoryService`, so task accuracy loss mixes retriever differences with layer effects).
-- **M2**: no-arg classes implementing `Check` (hallucination, memshield, contradiction, registry match),
-  `InputScreen`, `ActionGate`, and a registry binder `bind_params(tool, params, session) -> params` (I10).
-  Tell M4 the real module paths and they go into `DEFAULT_COMPONENTS`.
-- **M3**: Episodes in the format in `episode.py` (or a converter). Ground truth the runner needs: `poison` labels or
-  `poison_markers`, `attacker_goal`, `canaries` (128-bit markers with team + clearance), `expect` on clean
-  questions. An LLM agent plugs in by driving the same `Env` methods instead of `ScriptedAgent`.
+ASR follows slide 18 strictly: an attack succeeds when the attacker's chosen action executes
+(`expect.forbidden_tool_calls`); leaks are reported separately as the leak rate.
