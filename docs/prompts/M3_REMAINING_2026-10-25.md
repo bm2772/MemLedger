@@ -64,5 +64,5 @@ Do not edit demo/; list findings for M4, at least:
 ```
 
 ## Deadlines
-1 and 2 by Sun 26 Oct 12:00 (M4 then runs the final Brev test on a reproducible setup); 3 by Sun 26 Oct 18:00.
+1, 2 and the memshield fine-tune (see M3_attacks_data.md) by Sun 26 Oct 12:00 (M4 then runs the final Brev test on a reproducible setup); 3 by Sun 26 Oct 18:00.
 Mon 27 Oct: test M2's area (guards/policy/registry) per docs/TEAM_PLAN.md.
