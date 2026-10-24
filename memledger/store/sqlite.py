@@ -122,6 +122,10 @@ class SQLiteStore:
             if (team is None or r["team"] == team) and (allowed is None or r["team"] in allowed)
         ]
 
+    def teams(self) -> list[str]:
+        """Every team label present on a claim (unscoped plain-RAG retrieval searches all of them)."""
+        return [r["team"] for r in self.conn.execute("SELECT DISTINCT team FROM claims ORDER BY team").fetchall()]
+
     def keyword_search(self, teams: list[str], query: str, k: int) -> list[tuple[str, float]]:
         """BM25 over claim text (FTS5). Score = -bm25, higher is better."""
         tokens = re.findall(r"[A-Za-z0-9]+", query)

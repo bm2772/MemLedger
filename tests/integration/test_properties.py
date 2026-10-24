@@ -1,8 +1,8 @@
 """End-to-end properties of the built service (slides 14, 15, 21; invariants I1-I3, tamper detection, retraction).
 
 Everything goes through `build_service(version)` with the code-only lexical guard fallbacks (no models, no network).
-Isolation / clearance are enforced on `full` (access control); `baseline` has no access control by design, but team
-isolation is part of retrieval itself and is checked there too.
+Clearance is enforced on `full` (access control). Team scoping and hash-chain verification are provenance-level
+features: `baseline` is plain RAG (global store, no verification), so there it is the *vulnerability* that is asserted.
 """
 
 from __future__ import annotations
@@ -84,7 +84,7 @@ class Pop:
 
 
 # ---------------------------------------------------------------- (a) team isolation
-@pytest.mark.parametrize("version", ["baseline", "full"])
+@pytest.mark.parametrize("version", ["provenance", "full"])
 def test_team_isolation_across_all_routes(version):
     pop = Pop(version, seed=1)
     svc = pop.svc
@@ -106,7 +106,18 @@ def test_team_isolation_across_all_routes(version):
                 assert all(pop.claims[i]["team"] in (team, "shared") for i in ids)
 
 
-@pytest.mark.parametrize("version", ["baseline", "full"])
+def test_baseline_plain_rag_is_not_team_scoped():
+    pop = Pop("baseline", seed=1)
+    leaked = 0
+    for team in TEAMS:
+        user = sess(team, 2)
+        for cid, m in pop.claims.items():
+            if m["team"] not in (team, "shared"):
+                leaked += cid in {h.claim.id for h in pop.svc.retrieve(m["text"], user, k=50)}
+    assert leaked > 10  # an unscoped global store hands out other teams' claims for an exact-text query
+
+
+@pytest.mark.parametrize("version", ["provenance", "full"])
 def test_shared_readable_by_everyone_and_not_a_bridge(version):
     svc = make(version)
     shared_src = svc.ingest("Shared paper: gadget7 reaches recall 77.1 on benchmark z9.", SourceKind.PAPER, SHARED)
@@ -164,7 +175,7 @@ def test_low_clearance_cannot_launder_secret_into_readable_claim():
 
 
 # ---------------------------------------------------------------- (c) identity comes from the Session only
-@pytest.mark.parametrize("version", ["baseline", "full"])
+@pytest.mark.parametrize("version", ["provenance", "full"])
 def test_text_claiming_another_team_does_not_change_labels(version):
     svc = make(version)
     a = sess("team_a", 0)
@@ -254,10 +265,16 @@ def test_tamper_detection_is_100_percent_on_full():
     assert total >= 50 and not misses, misses[:5]
 
 
-def test_tamper_detection_is_100_percent_on_baseline():
-    caught, total, misses = run_tamper_trials("baseline", 15)
-    print(f"tamper detection (baseline): {caught}/{total}")
+def test_tamper_detection_is_100_percent_on_provenance():
+    caught, total, misses = run_tamper_trials("provenance", 15)
+    print(f"tamper detection (provenance): {caught}/{total}")
     assert not misses, misses[:5]
+
+
+def test_baseline_does_not_verify_hashes_so_tampering_goes_unnoticed():
+    caught, total, _ = run_tamper_trials("baseline", 15)
+    print(f"tamper detection (baseline): {caught}/{total}")
+    assert total >= 15 and caught / total < 0.2  # an edit that changes nothing visible (e.g. the log) is still not caught
 
 
 # ---------------------------------------------------------------- (e) retraction end to end

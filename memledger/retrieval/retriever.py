@@ -14,37 +14,42 @@ class Retriever:
         self.index = index
         self.trust_threshold = trust_threshold
         self.engine = TrustEngine(store)
+        self.last_routes: dict[str, set[str]] = {}  # claim id -> routes that made it a candidate (tests, attacks/)
 
     def _candidates(self, query: str, teams: list[str], k: int) -> dict[str, float]:
         rel: dict[str, float] = {}
+        routes: dict[str, set[str]] = {}
+        self.last_routes = routes
 
-        def bump(cid: str, r: float) -> None:
+        def bump(cid: str, r: float, route: str) -> None:
+            routes.setdefault(cid, set()).add(route)
             if r > rel.get(cid, -1.0):
                 rel[cid] = r
 
         for cid, score in self.index.query(teams, query, k * 3):
-            bump(cid, score)
+            bump(cid, score, "index")
         kw = self.store.keyword_search(teams, query, k * 3)
         top = max((s for _, s in kw), default=0.0)
         for cid, score in kw:
-            bump(cid, score / top if top > 0 else 1.0)
+            bump(cid, score / top if top > 0 else 1.0, "keyword")
         q = query.lower()
         for subject in self.store.triple_subjects():
             if subject and subject in q:
                 for cid in self.store.lookup_triples(subject):
-                    bump(cid, 1.0)
+                    bump(cid, 1.0, "triple")
         # one hop: parents, children (x0.5) and newer versions (x0.9) of stage-1 claims
         for cid, r in list(rel.items()):
             for e in self.store.edges(dst=cid, type="supported_by"):
-                bump(e["src"], r * 0.5)
+                bump(e["src"], r * 0.5, "graph")
             for e in self.store.edges(src=cid, type="supported_by"):
-                bump(e["dst"], r * 0.5)
+                bump(e["dst"], r * 0.5, "graph")
             for e in self.store.edges(dst=cid, type="supersedes"):
-                bump(e["src"], r * 0.9)
+                bump(e["src"], r * 0.9, "graph")
         return rel
 
-    def search(self, query: str, session: Session, k: int = 8) -> list[RetrievedMemory]:
-        teams = [session.team, "shared"]
+    def search(self, query: str, session: Session, k: int = 8, scoped: bool = True) -> list[RetrievedMemory]:
+        """scoped=False is the plain-RAG baseline: one global index, every team's claims are candidates."""
+        teams = [session.team, "shared"] if scoped else self.store.teams()
         t_now = now()
         out = []
         for cid, r in self._candidates(query, teams, k).items():

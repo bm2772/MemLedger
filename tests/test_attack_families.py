@@ -143,9 +143,13 @@ def test_isolation_matrix_representatives(suite):
 
 def test_db_tamper_detected_and_untampered_control_is_served(suite):
     for e in pick(suite["dev"], "db_tamper", 6):
-        for version in ("baseline", "full"):
+        base = run(e, "baseline")  # plain memory has no hash chain: the edited record is served, nothing is detected
+        assert not base["tamper"]["detected"] and base["tamper"]["returned"] and base["tamper"]["quarantined"] == 0
+        assert attack_success(e, base) is True
+        for version in ("provenance", "write_checks", "full", "full_no_registry"):
             row = run(e, version)
             assert row["tamper"]["detected"] and not row["leaks"], (e.id, version, row["tamper"])
+            assert row["tamper"]["detected_by"] == "hash verification"
             assert attack_success(e, row) is False
         ctrl = Episode.from_dict(e.to_dict())
         ctrl.meta.pop("tamper")

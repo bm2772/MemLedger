@@ -1,7 +1,8 @@
 """The five versions compared on slide 17 (Figure 6), built by M1's memledger.core.factory.build_service.
 
-baseline          plain retrieval memory (LedgerService with nothing switched on)
-provenance        + provenance graph and JTMS trust
+baseline          plain RAG: one global store (no team scoping), no hash-chain verification on read, no JTMS
+                  retraction, no guards; the service still stores the same rows so the tamper edits can be applied
+provenance        + team-scoped lookup, provenance graph, JTMS trust and hash-chain verification on every read
 write_checks      + input screen (step 1) and write checks: hallucination, memshield, contradiction
 full              + registry match, access control and action gate; high-risk params bound from the registry (I10)
 full_no_registry  full without the registry, to isolate its effect
@@ -79,6 +80,7 @@ def build(version: str | Version, episode_registry: dict, models: dict[str, Any]
     manifest = {"version": v.name, "service": type(svc).__name__, "checks": [type(c).__name__ for c in svc.checks],
                 "input_screen": svc.input_screen is not None, "action_gate": svc.gate is not None,
                 "access_control": svc.access is not None, "registry": reg is not None,
+                "hash_verify": svc.verify_hashes, "team_scoped": svc.scoped, "jtms": svc.jtms,
                 "guard_backend": backend or guard_backend(), "missing": []}
     return Built(svc, reg, manifest)
 

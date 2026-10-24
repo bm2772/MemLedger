@@ -1,7 +1,8 @@
 """Build a LedgerService for one of the five evaluated versions (docs/interfaces.md, slide 17).
 
-    baseline          no checks, screen, access control or gate (plain retrieval, no provenance-based filtering)
-    provenance        LedgerService with trust and hash chain, no guards
+    baseline          plain RAG: no checks, screen, access control or gate, and also NO hash-chain verification on read,
+                      NO team scoping of the index (one global store) and NO JTMS retraction (flag_source only marks)
+    provenance        + team-scoped lookup, JTMS trust/retraction and hash-chain verification on every read; no guards
     write_checks      + input screen, hallucination, memshield, contradiction, registry match
     full              + access control and action gate
     full_no_registry  full without registry match (the gate keeps no registry either, so nothing is bound)
@@ -33,6 +34,7 @@ def build_service(version: str, *, registry: Any | None = None, on_timing: Calla
     key = version.lstrip("+")
     if key not in FLAGS:
         raise KeyError(f"unknown version {version!r}; choose from {list(FLAGS)}")
+    plain_off = key != "baseline"  # baseline = plain RAG: no hash-chain check, no team scoping, no JTMS retraction
     checks_on, screen_on, access_on, gate_on, registry_on = FLAGS[key]
     # guards are imported lazily so baseline/provenance never need them
     from memledger.guards import attach_all
@@ -57,6 +59,6 @@ def build_service(version: str, *, registry: Any | None = None, on_timing: Calla
     screen = InputScreen(classifier=fakes.get("injection")) if screen_on else None
     svc = LedgerService(store=fakes.get("store"), index=fakes.get("index"), checks=checks, input_screen=screen,
                         screen_threshold=screen_threshold, access=access, gate=gate, on_timing=on_timing,
-                        version=key)
+                        version=key, verify_hashes=plain_off, scoped=plain_off, jtms=plain_off)
     attach_all([*svc.checks, *([gate] if gate else [])], svc)
     return svc

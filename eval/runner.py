@@ -151,8 +151,9 @@ def run_one(ep: Episode, v: Version, llm, models: dict, backend: str, max_steps:
     wall = time.perf_counter() - t0
     row = record(ep, v.name, res, built.service, error)
     row["wall_s"] = round(wall, 3)
-    if hasattr(memory, "report"):
-        row["tamper"] = memory.report()
+    if hasattr(memory, "report"):  # attacks/tamper.py wrappers: TamperingService -> "tamper", ProbeService -> "side_channel"
+        row["side_channel" if hasattr(memory, "calls") else "tamper"] = memory.report()
+    row["svc_stats"] = dict(built.service.stats)
     row["ms"] = dict(timings)
     row["llm"] = {"calls": llm.meter.calls - before[0], "prompt_tokens": llm.meter.prompt_tokens - before[1],
                   "completion_tokens": llm.meter.completion_tokens - before[2]}

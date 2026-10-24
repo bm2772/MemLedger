@@ -65,6 +65,9 @@ class LedgerService:
         gate: ActionGate | None = None,
         on_timing: Callable[[str, float], None] | None = None,
         version: str = "",
+        verify_hashes: bool = True,
+        scoped: bool = True,
+        jtms: bool = True,
     ) -> None:
         self.store = store or SQLiteStore()
         self.index = index or InMemoryIndex()
@@ -77,6 +80,9 @@ class LedgerService:
         self.gate = gate
         self.on_timing = on_timing
         self.version = version
+        # Plain-RAG switches (eval baseline): no hash-chain check on read, no team-scoped lookup, no JTMS retraction.
+        self.verify_hashes, self.scoped, self.jtms = verify_hashes, scoped, jtms
+        self.stats = {"read_filtered": 0}  # memories the access-control read filter dropped (eval attribution)
         self.timings: list[dict] = []  # {"op": ingest|write|read|gate, "ms": float, "version": str}
         self.signing_key = signing_key or Ed25519PrivateKey.generate()
         self.public_key = public_key or self.signing_key.public_key()
@@ -237,11 +243,13 @@ class LedgerService:
         t0 = time.perf_counter()
         try:
             out = []
-            for m in Retriever(self.store, self.index).search(query, session, k * 2):
-                if self.verify_claim(m.claim.id):
+            for m in Retriever(self.store, self.index).search(query, session, k * 2, scoped=self.scoped):
+                if not self.verify_hashes or self.verify_claim(m.claim.id):  # baseline: nothing is verified
                     out.append(m)
             if self.access is not None:  # step 6: read filter, identity from the Session only
-                out = self.access.filter(session, out)
+                kept = self.access.filter(session, out)
+                self.stats["read_filtered"] += len(out) - len(kept)
+                out = kept
             return out[:k]
         finally:
             self._timed("read", t0)
@@ -258,6 +266,8 @@ class LedgerService:
 
     def flag_source(self, source_id: str, reason: str) -> dict[str, list[str]]:
         self.store.flag_source(source_id, reason)
+        if not self.jtms:  # plain memory has no dependency graph to retract through
+            return {"quarantined": [], "restored": []}
         res = self.trust.recompute()
         self._anchor()
         return {"quarantined": res["quarantined"], "restored": res["restored"]}
