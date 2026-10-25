@@ -105,7 +105,9 @@ def test_agentdojo_maps_injection_tasks_to_tool_call_oracle(episodes):
 def test_agentdojo_is_skipped_with_a_reason_when_not_installed(root, monkeypatch):  # noqa: F811
     from attacks.suite import SuiteConfig, build
 
-    monkeypatch.setitem(__import__("sys").modules, "agentdojo", None)
+    mods = __import__("sys").modules
+    for name in [m for m in mods if m == "agentdojo" or m.startswith("agentdojo.")] or ["agentdojo"]:
+        monkeypatch.setitem(mods, name, None)  # submodules too: an earlier test may have imported them
     _, skipped = build("test", SuiteConfig(dev_worlds=1, test_worlds=1, benchmarks=["agentdojo"]), root=root)
     assert "agentdojo" in skipped and "pip install agentdojo" in skipped["agentdojo"]
 

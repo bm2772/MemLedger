@@ -10,7 +10,7 @@ from datetime import datetime
 
 from memledger.core.types import Claim, Derivation, Integrity, Labels, Source, SourceKind, Status, now
 
-TABLES = ["sources", "claims", "derivations", "edges", "status_log", "hash_log", "triples"]
+TABLES = ["sources", "claims", "derivations", "edges", "status_log", "hash_log", "anchored", "triples"]
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sources(
@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS status_log(
   reason TEXT NOT NULL, at TEXT);
 CREATE TABLE IF NOT EXISTS hash_log(
   seq INTEGER PRIMARY KEY AUTOINCREMENT, root TEXT, signature BLOB, n_items INTEGER, at TEXT);
+CREATE TABLE IF NOT EXISTS anchored(
+  item_id TEXT PRIMARY KEY, leaf TEXT NOT NULL, seq INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS triples(
   id INTEGER PRIMARY KEY AUTOINCREMENT, claim_id TEXT, subject TEXT, property TEXT, value TEXT);
 CREATE VIRTUAL TABLE IF NOT EXISTS claims_fts USING fts5(
@@ -241,13 +243,23 @@ class SQLiteStore:
         self.set_status(source_id, "flagged", reason)
 
     # ---- hash log
-    def append_hash_log(self, root: str, signature: bytes, n_items: int) -> int:
+    def append_hash_log(self, root: str, signature: bytes, n_items: int,
+                        leaves: dict[str, str] | None = None) -> int:
+        """Append a signed root; `leaves` ({item id: leaf}) are the items first anchored by it, stored in the same
+        transaction so the signed leaf set is exactly what the root covers (never recomputed from current rows)."""
         cur = self.conn.execute(
             "INSERT INTO hash_log(root,signature,n_items,at) VALUES (?,?,?,?)",
             (root, signature, n_items, _iso(now())),
         )
+        seq = int(cur.lastrowid)
+        self.conn.executemany("INSERT INTO anchored(item_id,leaf,seq) VALUES (?,?,?)",
+                              [(i, leaf, seq) for i, leaf in (leaves or {}).items()])
         self.conn.commit()
-        return int(cur.lastrowid)
+        return seq
+
+    def anchored_leaves(self) -> dict[str, str]:
+        """{item id: leaf} for every item a signed root has covered."""
+        return {r["item_id"]: r["leaf"] for r in self.conn.execute("SELECT item_id, leaf FROM anchored")}
 
     def hash_log(self) -> list[dict]:
         return [dict(r) for r in self.conn.execute("SELECT * FROM hash_log ORDER BY seq").fetchall()]
