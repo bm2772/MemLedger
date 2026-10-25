@@ -6,3 +6,6 @@ If Claude wants to change something outside your area or in `memledger/core/{typ
 
 Common footer (already included in every prompt): tests first, `make test` + `make lint` pass, stay in my folders,
 no secrets/weights/datasets in git, small commits, then push the branch.
+
+Current to-dos: `M3_REMAINING_2026-10-25.md` (Ahan, section 4 due Sun 26 Oct 12:00), `M4_BREV_RUN_2026-10-26.md` (Omkaar,
+final Brev run Sun 26 Oct after the merges).
