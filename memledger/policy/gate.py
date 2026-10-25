@@ -29,7 +29,14 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from memledger.core.types import Integrity, Session, Verdict, now
 from memledger.policy.access import AccessControl
-from memledger.policy.items import Item, Resolver, integrity_of, resolver
+from memledger.policy.items import (
+    INSTRUCTION_CHANNELS,
+    Item,
+    Resolver,
+    integrity_of,
+    resolver,
+    taints_sending,
+)
 from memledger.registry import signing
 from memledger.registry.binding import default_registry, protected_params, registry_value
 from memledger.registry.registry import Registry
@@ -177,6 +184,8 @@ class ActionGate:
             problem = "unknown origin"
         elif integrity_of(item) == Integrity.UNTRUSTED:
             problem = "untrusted, contested or quarantined"
+        elif item.is_source and item.kind in INSTRUCTION_CHANNELS:
+            problem = f"untrusted channel ({item.kind.value} output)"
         elif not item.is_source and item.trust < self.min_trust:
             problem = f"trust {item.trust:.2f} < {self.min_trust:.2f}"
         else:
@@ -200,13 +209,13 @@ class ActionGate:
         return out
 
     def _read_untrusted_input(self, session: Session, context_ids: list[str]) -> bool:
-        """Taint: the session read untrusted input (web/flagged/untrusted-labelled sources or claims)."""
-        if self.access is not None and self.access.tainted(session):
+        """Taint (I4): the session read untrusted input (web/tool/flagged/untrusted-labelled sources or claims)."""
+        if self.access is not None and self.access.send_tainted(session):
             return True
         for cid in context_ids:
             item = self.resolve(cid) if self.resolve else None
-            if item is not None and (item.is_source or item.labels.integrity == Integrity.UNTRUSTED) \
-                    and integrity_of(item) == Integrity.UNTRUSTED:
+            if item is not None and (taints_sending(item) if item.is_source
+                                     else item.labels.integrity == Integrity.UNTRUSTED):
                 return True
         return False
 
