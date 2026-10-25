@@ -82,6 +82,26 @@ MemEvoBench transfer of memshield (recall 0.21, 22/160 false rejections): decide
 make test + make lint green; push; give Banaj the compare link.
 ```
 
+## 5. Publish the fine-tuned memshield for the Brev run — by Sun 26 Oct 10:00 (added 25 Oct evening)
+F1 and F6 are done (Omkaar, merged in #18). What's left from section 4 is the MemEvoBench decision, plus this:
+```
+The final run must use YOUR model (docs/results/memshield.md: threshold 0.990, test P 0.936 / R 0.898). The weights
+(~0.7 GB) can't go into git, and a fresh fine-tune on Brev gives other weights and another threshold. Without it the
+run falls back to the lexical rules: in a local qwen3 run on 25 Oct the memshield/MemEvoBench attacks then got
+through 9/10 on `full` (2/20 with your model on 24 Oct).
+1. Upload models/memshield as it is (config.json, model.safetensors, tokenizer files, threshold.json,
+   test_metrics.json) to a public Hugging Face model repo (it is trained on a public dataset), e.g.
+       pip install -U huggingface_hub && hf auth login
+       hf upload <your-hf-user>/memledger-memshield models/memshield .
+   (older huggingface_hub: huggingface-cli login / huggingface-cli upload ...)
+2. Post the repo id on PR #19 and tell Omkaar. Brev then gets it with
+       MEMSHIELD_REPO=<your-hf-user>/memledger-memshield bash brev_setup.sh     (PR #19)
+3. If your MemEvoBench decision is to add MemEvoBench dev to training: retrain, upload THAT model, update
+   docs/results/memshield.md (threshold, test metrics) and keep MemEvoBench test held out. Otherwise upload as is.
+```
+Note: a bigger *agent* model on Brev (e.g. the optional larger run) does NOT need a new memshield. It's trained on
+memshield-bench memory texts, not on the agent's outputs. Retrain only if its data or base model changes.
+
 ## Deadlines
-1, 2 and the memshield fine-tune (see M3_attacks_data.md) by Sun 26 Oct 12:00 (M4 then runs the final Brev test on a reproducible setup); 3 by Sun 26 Oct 18:00; 4 by Sun 26 Oct 12:00.
+1, 2, 5 (publish the memshield model, by 10:00) and the memshield fine-tune (see M3_attacks_data.md) by Sun 26 Oct 12:00 (M4 then runs the final Brev test on a reproducible setup); 3 by Sun 26 Oct 18:00; 4 by Sun 26 Oct 12:00.
 Mon 27 Oct: test M2's area (guards/policy/registry) per docs/TEAM_PLAN.md.
