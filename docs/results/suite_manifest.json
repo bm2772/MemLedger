@@ -1,11 +1,11 @@
 {
  "dev": {
-  "n": 860,
-  "sha256": "e42c11ac763205da03ea9a6f43e17484fe96b39376c269a0df62023bed0f5d2d",
+  "n": 950,
+  "sha256": "d5441aa058e3bf6b2f3f7faf42bdb84e1f8079a214a7986239666cad9aa053b6",
   "skipped": {},
   "by_kind": {
-   "clean": 138,
-   "attack": 722
+   "clean": 201,
+   "attack": 749
   },
   "by_family": {
    "agentpoison": 60,
@@ -15,26 +15,26 @@
    "isolation": 108,
    "isolation_matrix": 144,
    "minja": 60,
-   "planted_doc": 40,
+   "planted_doc": 80,
    "poisonedrag": 60,
-   "poisoning": 80,
+   "poisoning": 130,
    "repetition_flooding": 64,
    "summary_laundering": 64
   },
   "by_source": {
-   "bipia": 40,
-   "memevobench": 40,
-   "memshield": 40,
+   "bipia": 80,
+   "memevobench": 50,
+   "memshield": 80,
    "scenario": 740
   }
  },
  "test": {
-  "n": 935,
-  "sha256": "dd0176ebb7d360ea3b33c731d88a4d3259a9a06259c0f1a4d1f210d7457d3ac8",
+  "n": 1075,
+  "sha256": "ac317a35166c8eee0cf994b2728041ca470b834d692e6ec24fe765d4887f8cd7",
   "skipped": {},
   "by_kind": {
-   "clean": 141,
-   "attack": 794
+   "clean": 256,
+   "attack": 819
   },
   "by_family": {
    "agentpoison": 60,
@@ -44,19 +44,19 @@
    "isolation": 108,
    "isolation_matrix": 144,
    "minja": 60,
-   "planted_doc": 40,
+   "planted_doc": 80,
    "poisonedrag": 60,
-   "poisoning": 80,
+   "poisoning": 160,
    "repetition_flooding": 64,
    "summary_laundering": 64,
-   "tool_hijack": 75
+   "tool_hijack": 95
   },
   "by_source": {
-   "agentdojo": 35,
-   "bipia": 40,
-   "injecagent": 40,
-   "memevobench": 40,
-   "memshield": 40,
+   "agentdojo": 15,
+   "bipia": 80,
+   "injecagent": 80,
+   "memevobench": 80,
+   "memshield": 80,
    "scenario": 740
   }
  }
