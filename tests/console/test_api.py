@@ -116,3 +116,39 @@ def test_lab_runs_on_fresh_services(client):
     assert acme["baseline"]["hijacked"] and not acme["full"]["hijacked"]
     assert client.post("/api/lab/tamper", json={"edit": "claim_text"}, headers=RIA).json()["detected"]
     assert client.get("/api/workspaces", headers=RIA).json() == []
+
+
+# ---- PR #14 review fixes (web/)
+def test_guest_sees_only_shared_material(monkeypatch, tmp_path):
+    monkeypatch.setenv("MEMLEDGER_GUARD_BACKEND", "lexical")
+    auth = Auth({"t-ria": Session("ria", "team_a", "researcher", 1), "t-g": Session("g", "team_a", "guest", 1)})
+    c = TestClient(create_app(tmp_path, auth, models={}))
+    ria, guest = {"Authorization": "Bearer t-ria"}, {"Authorization": "Bearer t-g"}
+    made = c.post("/api/workspaces", json={"name": "g", "version": "provenance", "sample": "figure1"}, headers=ria)
+    ws = f"/api/workspaces/{made.json()['id']}"
+    assert c.get(f"{ws}/claims", headers=ria).json()
+    assert all(x["labels"]["team"] == "shared" for x in c.get(f"{ws}/claims", headers=guest).json())
+    assert all(x["labels"]["team"] == "shared" for x in c.get(f"{ws}/sources", headers=guest).json())
+
+
+def test_registry_change_keeps_session_taint_and_approvals(client):
+    ws = new(client, "acme")
+    app_ws = client.app.state.workspaces.get(ws.rsplit("/", 1)[-1])
+    svc_before, gate_queue = app_ws.service, app_ws.service.gate.queue
+    s = Session("fin", "team_a", "finance", 1)
+    web = client.post(f"{ws}/sources", json={"content": "Supplier news page.", "kind": "web"}, headers=FIN).json()
+    app_ws.service.access.observe(s, [app_ws.store.get_source(web["id"])])
+    assert client.post(f"{ws}/registry", json={"subject": "Bolt Co", "field": "account", "value": "5555"},
+                       headers=ADMIN).status_code == 201
+    assert app_ws.service is svc_before and app_ws.service.gate.queue is gate_queue
+    assert app_ws.service.access.tainted(s)
+    assert app_ws.registry.get("Bolt Co", "account") == "5555"
+
+
+def test_evidence_runs_the_write_checks(client):
+    ws = new(client, "figure1", version="full")
+    claims = client.get(f"{ws}/claims", headers=RIA).json()
+    unrelated = client.post(f"{ws}/sources", json={"content": "The cafeteria opens at 8am.", "kind": "user"},
+                            headers=RIA).json()
+    r = client.post(f"{ws}/claims/{claims[0]['id']}/evidence", json={"source_ids": [unrelated["id"]]}, headers=RIA)
+    assert r.status_code == 400 and "unsupported" in r.text

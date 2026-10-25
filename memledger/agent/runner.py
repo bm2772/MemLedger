@@ -71,6 +71,7 @@ class _Play:
     def __init__(self, episode: Episode, memory: MemoryService, agent: Agent, tools: ToolBox, result: EpisodeResult):
         self.ep, self.memory, self.agent, self.tools, self.res = episode, memory, agent, tools, result
         self.seen: dict[str, list[str]] = {n: [] for n in episode.sessions}  # each session's context window
+        self.step_ids = {st.id for st in episode.steps if st.id} | {sd.id for sd in episode.seeds}
         self.read: dict[str, list[str]] = {n: [] for n in episode.sessions}  # texts of retrieved memories
 
     def ref(self, x: str) -> str:
@@ -87,7 +88,9 @@ class _Play:
             self.res.ingested[sid], self.res.refs[sid] = src, src.id
             self.seen[name].append(src.id)
         elif s.op == "write":
-            ctx = [self.ref(r) for r in s.context] if s.context is not None else list(self.seen[name])
+            # a step that produced nothing (a rejected write) has no id to cite: drop it rather than pass its name
+            ctx = ([self.ref(r) for r in s.context if r in self.res.refs or r not in self.step_ids]
+                   if s.context is not None else list(self.seen[name]))
             wr = self.memory.propose_write(WriteProposal(s.text, ctx, user, "agent"))
             self.res.proposals[sid] = wr
             if wr.accepted and wr.claim_ids:

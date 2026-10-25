@@ -7,6 +7,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime
 from typing import Any
 
@@ -46,6 +47,15 @@ def item_hash(content: str, recorded_at: datetime, parent_hashes: list[str], lab
     if labels is not None:
         data += f"|{labels.team}|{labels.confidentiality}|{int(labels.integrity)}".encode()
     return hashlib.sha256(data).hexdigest()
+
+
+def leaf_of(item_id: str, content_hash: str) -> str:
+    """Merkle leaf of one stored item: binds the id to its hash, so a copied row under a new id is not anchored."""
+    return hashlib.sha256(f"{item_id}|{content_hash}".encode()).hexdigest()
+
+
+class IntegrityError(RuntimeError):
+    """The stored ledger no longer matches its signed root; the service refuses to sign over it."""
 
 
 def _new_id(prefix: str) -> str:
@@ -90,6 +100,19 @@ class LedgerService:
         self.signing_key = signing_key or Ed25519PrivateKey.generate()
         self.public_key = public_key or self.signing_key.public_key()
         self.trust = TrustEngine(self.store)
+        self._anchor_cache: tuple[int, dict[str, str], bool] | None = None  # (log seq, signed leaves, root matches)
+        self._migrated = False
+
+    def _migrate_anchors(self) -> None:
+        """A store written before leaves were recorded: anchor what is there now (trust on first use). Runs on first
+        use, not in __init__, because callers may set signing_key after construction (web/workspace.py)."""
+        if self._migrated:
+            return
+        self._migrated = True
+        if self.store.anchored_leaves() or self.store.latest_root() is None:  # new store, or already recorded
+            return
+        self._anchor([(x.id, x.content_hash) for x in [*self.store.list_sources(), *self.store.list_claims()]],
+                     migrate=True)
 
     # ---- timing (M4 "added delay": wall time of each service call, in ms)
     def _timed(self, op: str, t0: float) -> None:
@@ -117,7 +140,7 @@ class LedgerService:
             if score >= self.screen_threshold:
                 self.store.flag_source(src.id, f"input screen: score={score:.2f} >= {self.screen_threshold:.2f}")
                 src = self.store.get_source(src.id) or src
-        self._anchor()
+        self._anchor([(src.id, src.content_hash)])
         return src
 
     def propose_write(self, proposal: WriteProposal) -> WriteResult:
@@ -127,9 +150,30 @@ class LedgerService:
         finally:
             self._timed("write", t0)
 
+    def _validate(self, proposal: WriteProposal) -> tuple[WriteProposal, list[Verdict]]:
+        """Write-path checks shared by new claims and new evidence: context ids de-duplicated and all known (the hash
+        is rebuilt from exactly these parents on read), parent claims within Auth(p) like parent sources (I1, I2),
+        then the checks. Returns (normalised proposal, verdicts)."""
+        ids = list(dict.fromkeys(proposal.context_ids))
+        proposal = replace(proposal, context_ids=ids)
+        unknown = [i for i in ids if self.store.get_source(i) is None and self.store.get_claim(i) is None]
+        if unknown:
+            return proposal, [Verdict(False, 0.0, f"unknown context ids: {', '.join(unknown[:5])}", "provenance")]
+        sources = [s for i in ids if (s := self.store.get_source(i)) is not None]
+        claims = [c for i in ids if (c := self.store.get_claim(i)) is not None]
+        access = self.access or next((c for c in self.checks if hasattr(c, "derive_labels")), None)
+        if access is not None:  # the access check only sees sources: apply the same rule to parent memories
+            try:
+                access.derive_labels(proposal.session, [c.labels for c in claims])
+            except PermissionError as e:  # policy.access.AccessDenied
+                return proposal, [Verdict(False, 0.0, f"parent memory: {e}", "access")]
+            access.observe(proposal.session, [c.id for c in claims])  # an untrusted parent taints too (I3)
+        elif self.scoped and any(c.labels.team not in (proposal.session.team, "shared") for c in claims):
+            return proposal, [Verdict(False, 0.0, "parent memory from another team", "team_scope")]
+        return proposal, [c.check(proposal, sources) for c in self.checks]
+
     def _propose_write(self, proposal: WriteProposal) -> WriteResult:
-        sources = [s for i in proposal.context_ids if (s := self.store.get_source(i)) is not None]
-        verdicts = [c.check(proposal, sources) for c in self.checks]
+        proposal, verdicts = self._validate(proposal)
         if any(not v.ok for v in verdicts):
             return WriteResult(False, [], verdicts)
         score = min((v.score for v in verdicts), default=1.0)
@@ -145,13 +189,17 @@ class LedgerService:
         claim = self._make_claim(proposal, score)
         self.store.add_claim(claim)
         self.store.add_derivation(self._derivation(claim.id, proposal, score))
-        self.store.set_status(claim.id, Status.ACTIVE.value, "jtms: initial trust",
-                              self.trust.claim_trust(claim.id) or 0.0)
+        t = self.trust.claim_trust(claim.id)
+        if t is None and self.jtms:  # its only justification is already invalid (flagged source / quarantined parent)
+            self.store.set_status(claim.id, Status.QUARANTINED.value, "jtms: no valid justification", 0.0)
+            self._anchor([(claim.id, claim.content_hash)])
+            return WriteResult(False, [], [*verdicts, Verdict(False, 0.0, "no valid justification (JTMS)", "jtms")])
+        self.store.set_status(claim.id, Status.ACTIVE.value, "jtms: initial trust", t or 0.0)
         self.index.add(claim.labels.team, claim.id, claim.text)
         for c in self.checks:  # step 4: conflicts the contradiction check found are recorded as edges
             for conflict in getattr(c, "last_conflicts", []):
                 self.record_contradiction(claim.id, conflict.claim_id, conflict.is_update)
-        self._anchor()
+        self._anchor([(claim.id, claim.content_hash)])
         return WriteResult(True, [claim.id], verdicts)
 
     def _derivation(self, claim_id: str, p: WriteProposal, score: float) -> Derivation:
@@ -184,14 +232,28 @@ class LedgerService:
                      content_hash=item_hash(p.text, t, [h for _, h in parents], labels))
 
     # ---- hash chain
-    def _current_hashes(self) -> list[str]:
-        hs = [s.content_hash for s in self.store.list_sources()]
-        return hs + [c.content_hash for c in self.store.list_claims() if c.status != Status.QUARANTINED]
+    def _anchor(self, new: list[tuple[str, str]] = (), migrate: bool = False) -> None:
+        """Sign a root over every item anchored so far plus `new` (item id, content hash) pairs, the items this write
+        batch created. The leaf set only grows with items the service itself wrote, starting from the set the latest
+        signed root covers; it is never rebuilt from the current rows, so neither a row edited in storage nor a row
+        inserted into `anchored` can become part of a signed root."""
+        if not self._migrated:
+            self._migrate_anchors()
+        leaves = self._verified_leaves(migrate)
+        added = {i: leaf_of(i, h) for i, h in new if i not in leaves}
+        leaves.update(added)
+        root = merkle_root(list(leaves.values()))
+        self.store.append_hash_log(root, self.signing_key.sign(bytes.fromhex(root)), len(leaves), added)
 
-    def _anchor(self) -> None:
-        hashes = self._current_hashes()
-        root = merkle_root(hashes)
-        self.store.append_hash_log(root, self.signing_key.sign(bytes.fromhex(root)), len(hashes))
+    def _verified_leaves(self, migrate: bool) -> dict[str, str]:
+        """The leaf set to extend: empty for a new store or a migration, otherwise exactly the set the latest signed
+        root covers. Refuses to sign if the stored leaves no longer reproduce that root (rows added or removed)."""
+        if migrate or self.store.latest_root() is None:
+            return {}
+        leaves = self._signed_leaves()
+        if leaves is None:
+            raise IntegrityError("stored leaf set does not reproduce the latest signed root; refusing to sign")
+        return dict(leaves)
 
     def _chain_ok(self) -> bool:
         log = self.store.hash_log()
@@ -203,8 +265,26 @@ class LedgerService:
             return False
         return True
 
+    def _signed_leaves(self) -> dict[str, str] | None:
+        """The leaf set the latest signed root covers, or None if the stored leaves do not reproduce that root.
+        Cached per log entry: one tree build per new root, not per verified claim."""
+        self._migrate_anchors()
+        latest = self.store.latest_root()
+        if latest is None:
+            return None
+        if self._anchor_cache is None or self._anchor_cache[0] != latest["seq"]:
+            leaves = self.store.anchored_leaves()
+            self._anchor_cache = (latest["seq"], leaves, merkle_root(list(leaves.values())) == latest["root"])
+        _, leaves, ok = self._anchor_cache
+        return leaves if ok else None
+
+    def _anchored(self, item_id: str, content_hash: str) -> bool:
+        leaves = self._signed_leaves()
+        return leaves is not None and leaves.get(item_id) == leaf_of(item_id, content_hash)
+
     def _item_ok(self, claim: Claim, seen: set[str]) -> bool:
-        """Recompute the claim's hash (and its parents', recursively) from stored content."""
+        """Recompute the claim's hash (and its parents', recursively) from stored content; every parent must also be
+        in the signed leaf set with that hash."""
         seen.add(claim.id)
         first = self.store.derivations_for(claim.id)[:1]  # hash is based on the first derivation only
         parent_ids = [p for d in first for p in d.exposed_to]
@@ -213,9 +293,11 @@ class LedgerService:
             if (s := self.store.get_source(pid)) is not None:
                 if item_hash(s.content, s.recorded_at, [], s.labels) != s.content_hash:
                     return False
+                if not self._anchored(s.id, s.content_hash):
+                    return False
                 hashes.append(s.content_hash)
             elif (pc := self.store.get_claim(pid)) is not None:
-                if pid not in seen and not self._item_ok(pc, seen):
+                if pid not in seen and not (self._item_ok(pc, seen) and self._anchored(pc.id, pc.content_hash)):
                     return False
                 hashes.append(pc.content_hash)
             else:
@@ -226,20 +308,18 @@ class LedgerService:
         claim = self.store.get_claim(claim_id)
         if claim is None:
             return False
-        ok = self._item_ok(claim, set()) and self._chain_ok() and self._in_latest_root(claim)
-        if not ok:
+        ok = self._chain_ok() and self._item_ok(claim, set()) and self._in_latest_root(claim)
+        if not ok and claim.status != Status.QUARANTINED:
+            # quarantine only; no re-anchor: the signed leaf set must never absorb the state that just failed
             self.store.set_status(claim_id, Status.QUARANTINED.value, "integrity: hash mismatch")
-            self._anchor()
         return ok
 
     def _in_latest_root(self, claim: Claim) -> bool:
-        if claim.status == Status.QUARANTINED:
-            return True
-        hashes = self._current_hashes()
-        root = self.store.latest_root()["root"]
-        if claim.content_hash not in hashes:
+        leaves = self._signed_leaves()
+        if leaves is None or not self._anchored(claim.id, claim.content_hash):
             return False
-        return verify_proof(claim.content_hash, merkle_proof(hashes, claim.content_hash), root)
+        leaf = leaf_of(claim.id, claim.content_hash)
+        return verify_proof(leaf, merkle_proof(list(leaves.values()), leaf), self.store.latest_root()["root"])
 
     # ---- reads
     def retrieve(self, query: str, session: Session, k: int = 8) -> list[RetrievedMemory]:
@@ -274,6 +354,20 @@ class LedgerService:
         res = self.trust.recompute()
         self._anchor()
         return {"quarantined": res["quarantined"], "restored": res["restored"]}
+
+    def propose_justification(self, claim_id: str, proposal: WriteProposal) -> WriteResult:
+        """New evidence from a user or agent: the same write-path checks as a new memory (unknown ids, Auth(p),
+        support for the claim's own text, taint cap), then add_justification with the checks' score as s. Use this,
+        not add_justification, for anything a caller supplies: unchecked evidence could raise any claim's trust."""
+        claim = self.store.get_claim(claim_id)
+        if claim is None:
+            raise KeyError(claim_id)
+        proposal, verdicts = self._validate(replace(proposal, text=claim.text))
+        if any(not v.ok for v in verdicts):
+            return WriteResult(False, [], verdicts)
+        score = min((v.score for v in verdicts), default=1.0)
+        self.add_justification(claim_id, proposal.context_ids, score, agent_id=proposal.agent_id)
+        return WriteResult(True, [claim_id], verdicts)
 
     def add_justification(self, claim_id: str, context_ids: list[str], score: float = 1.0,
                           agent_id: str = "") -> dict[str, list[str]]:
