@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Brev GPU instance bootstrap (M4). Idempotent: safe to re-run after a restart.
-#   1. clone/update the repo into /home/ubuntu/workspace/MemLedger
+#   1. clone/update the repo into $WORKSPACE/MemLedger (default ~/workspace: the login user differs per provider)
 #   2. `make setup-models data suite`: Python 3.11 .venv with every extra (incl. vLLM), checker models in the HF
 #      cache, benchmarks in data/, attack suite in data/attacks (same commands as on a Mac)
 #   3. fine-tune the memshield write-time classifier if models/memshield is missing (`make memshield`, minutes on a GPU)
@@ -13,7 +13,7 @@
 # STOP THE INSTANCE when done (see infra/README.md) and log the session with infra/cost_logger.py.
 set -euo pipefail
 
-WORKSPACE=/home/ubuntu/workspace
+WORKSPACE=${WORKSPACE:-$HOME/workspace}  # ubuntu on some providers, shadeform on massedcompute
 REPO_URL=${REPO_URL:-https://github.com/bm2772/MemLedger.git}
 BRANCH=${BRANCH:-integration/v1}  # the branch with every merged PR until v1.0 is on main
 MODEL=${MODEL:-Qwen/Qwen3-8B}

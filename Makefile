@@ -42,7 +42,7 @@ LLM_URL ?= http://localhost:8000/v1
 WORKERS ?= 16
 RUN_ID ?= brev-test
 # HF_HOME: the checker weights brev_setup.sh downloaded (a new shell would otherwise fetch them again into ~/.cache)
-BREV_EVAL = HF_HOME=$${HF_HOME:-/home/ubuntu/workspace/hf-cache} MEMLEDGER_DEVICE=cuda PYTHONPATH=. \
+BREV_EVAL = HF_HOME=$${HF_HOME:-$$HOME/workspace/hf-cache} MEMLEDGER_DEVICE=cuda PYTHONPATH=. \
 	.venv/bin/python -u -m attacks.evaluate --split test --llm openai \
 	--model $(MODEL) --base-url $(LLM_URL) --guards hf --out results/attacks
 eval-brev-smoke:  # 1 episode per family on all 5 versions (~5 min): every model loads, no episode errors
