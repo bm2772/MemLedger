@@ -21,10 +21,10 @@ Docker instead: `docker build -f infra/Dockerfile -t memledger:gpu . && docker r
 # 1. GPU: 40 GB+ (L40S 48 GB or A100) - vLLM gets 80% (GPU_UTIL), the checker models the rest
 curl -fsSL https://raw.githubusercontent.com/bm2772/MemLedger/integration/v1/infra/brev_setup.sh -o brev_setup.sh
 sudo shutdown -h +300                              # backstop: never leave the GPU running
-# memshield: use Ahan's model (docs/results/memshield.md, threshold 0.990) - copy it BEFORE brev_setup.sh, which only
-# fine-tunes a new one (different weights/threshold) when models/memshield is missing:
+# memshield: use Ahan's model (docs/results/memshield.md, threshold 0.990), not a new fine-tune (different weights and
+# threshold): MEMSHIELD_REPO=<hf user>/<repo> downloads it from the Hugging Face Hub, or copy it before setup with
 #   (on the Mac) scp -r models/memshield ubuntu@<instance>:/home/ubuntu/workspace/MemLedger/models/
-MODEL=Qwen/Qwen3-8B BRANCH=integration/v1 bash brev_setup.sh   # setup, data, suite, memshield (if missing), vLLM
+MODEL=Qwen/Qwen3-8B BRANCH=integration/v1 MEMSHIELD_REPO=<hf user>/<repo> bash brev_setup.sh  # setup ... memshield, vLLM
 export HF_HOME=/home/ubuntu/workspace/hf-cache && cd /home/ubuntu/workspace/MemLedger
 # 2. smoke: 1 episode per family x 5 versions; must print no "WARNING: ... episodes errored"
 make eval-brev-smoke

@@ -5,7 +5,7 @@
 #      cache, benchmarks in data/, attack suite in data/attacks (same commands as on a Mac)
 #   3. fine-tune the memshield write-time classifier if models/memshield is missing (`make memshield`, minutes on a GPU)
 #   4. start a vLLM OpenAI-compatible server for the 8-12B main model on :$PORT and wait until healthy
-# Usage:  bash brev_setup.sh            (env: MODEL, PORT, MAX_MODEL_LEN, GPU_UTIL, BRANCH, HF_TOKEN)
+# Usage:  bash brev_setup.sh            (env: MODEL, PORT, MAX_MODEL_LEN, GPU_UTIL, BRANCH, HF_TOKEN, MEMSHIELD_REPO)
 # Then:   make eval-brev-smoke && make eval-brev        (infra/README.md "Final run")
 # The checker models share the GPU with vLLM: GPU_UTIL (default 0.80) leaves them room; use a 40 GB+ GPU (L40S/A100).
 # Qwen3: send {"think": false} / chat_template_kwargs {"enable_thinking": false} with every request; with thinking
@@ -40,7 +40,11 @@ if ! command -v python3.11 >/dev/null; then
   sudo apt-get install -y python3.11 python3.11-venv python3.11-dev
 fi
 make -C "$REPO" PY=python3.11 setup-models data suite
-# prefer Ahan's model (scp it to $REPO/models/memshield first, infra/README.md); otherwise fine-tune one here
+# prefer Ahan's model (docs/results/memshield.md): MEMSHIELD_REPO=<hf user>/<repo> downloads it from the Hugging Face
+# Hub, or scp it to $REPO/models/memshield first (infra/README.md); otherwise fine-tune one here
+if [ ! -f "$REPO/models/memshield/config.json" ] && [ -n "${MEMSHIELD_REPO:-}" ]; then
+  "$VENV/bin/python" -c "from huggingface_hub import snapshot_download as d; d('$MEMSHIELD_REPO', local_dir='$REPO/models/memshield')"
+fi
 [ -f "$REPO/models/memshield/config.json" ] || make -C "$REPO" memshield  # data/memshield comes from `make data`
 
 if curl -sf "http://localhost:$PORT/health" >/dev/null; then
