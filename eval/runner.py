@@ -12,13 +12,15 @@ workers > 1 plays episodes concurrently (threads; each episode has its own servi
 checker models are shared): vLLM serves the requests in parallel. Each episode gets its own copy of the LLM client so
 its token counts stay its own, and the checker models are called under one lock. Latencies measured with workers > 1
 include contention, so take the "added ms" numbers from a workers = 1 run. resume=True keeps a version whose raw rows
-already cover these episodes (a run that died half-way restarts at the first unfinished version).
+already cover these episodes without errors (a run that died half-way restarts at the first unfinished version); the
+run's configuration is written to raw/<run_id>/run.json and a resume with a different one is refused.
 """
 
 from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import json
 import threading
 import time
@@ -212,29 +214,49 @@ def _own_llm(llm):
     return mine
 
 
+def _model_names(models: dict) -> dict[str, str]:
+    """Which checker models actually loaded (e.g. ProtectAI when Prompt Guard 2 is gated)."""
+    return {k: str(getattr(m, "model_id", None) or type(m).__name__) for k, m in models.items() if m is not None}
+
+
+def _fingerprint(llm, backend: str, models: dict, episodes: list[Episode], split: str | None, label: str) -> dict:
+    """What a run's rows depend on besides the code; --resume reuses rows only under the same fingerprint."""
+    content = "\n".join(json.dumps(e.to_dict(), sort_keys=True, default=str) for e in episodes)
+    return {"llm": llm.model, "guard_backend": backend, "guard_models": _model_names(models), "split": split,
+            "episodes": label, "n_episodes": len(episodes),
+            "episodes_sha256": hashlib.sha256(content.encode()).hexdigest()}
+
+
 def _resumed(path: Path, episodes: list[Episode]) -> list[dict] | None:
+    """The version's rows if they cover exactly these episodes and none errored (an errored episode, e.g. while the
+    LLM server was down, is played again together with its version)."""
     if not path.exists():
         return None
     rows = [json.loads(x) for x in path.read_text().splitlines() if x.strip()]
-    return rows if [r["episode"] for r in rows] == [e.id for e in episodes] else None
+    if [r["episode"] for r in rows] != [e.id for e in episodes]:
+        return None
+    if errors := sum(bool(r.get("error")) for r in rows):
+        print(f"[{path.stem}] not resumed: {errors} errored episodes in {path}", flush=True)
+        return None
+    return rows
 
 
 def _play(episodes: list[Episode], v: Version, llm, models: dict, backend: str, workers: int,
           progress: bool) -> tuple[list[dict], dict | None]:
-    def one(i: int) -> tuple[int, dict, dict]:
+    def one(i: int):
         mine = _own_llm(llm)
         row, m = run_one(episodes[i], v, mine, models, backend)
-        for k in ("calls", "prompt_tokens", "completion_tokens"):
-            setattr(llm.meter, k, getattr(llm.meter, k) + getattr(mine.meter, k))  # run totals; under the GIL
-        return i, row, m
+        return i, row, m, mine.meter
 
     rows: list[dict | None] = [None] * len(episodes)
     manifest = None
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
         futures = [pool.submit(one, i) for i in range(len(episodes))]
         for done, fut in enumerate(as_completed(futures), 1):
-            i, row, m = fut.result()
+            i, row, m, meter = fut.result()
             rows[i], manifest = row, manifest or m
+            for k in ("calls", "prompt_tokens", "completion_tokens"):  # run totals, added on this (main) thread
+                setattr(llm.meter, k, getattr(llm.meter, k) + getattr(meter, k))
             if progress:
                 print(f"[{v.name} {done}/{len(episodes)}] {episodes[i].id} {row['wall_s']:.1f}s"
                       f"{' ERROR ' + row['error'] if row['error'] else ''}", flush=True)
@@ -247,13 +269,24 @@ def run(episodes: list[Episode], versions: list[str], out_dir: str | Path | None
     llm = llm or GullibleLLM()
     backend = backend or guard_backend()
     models = load_guard_models(backend)
+    fingerprint = _fingerprint(llm, backend, models, episodes, split, episodes_label)
     if workers > 1:
         lock = threading.Lock()
         models = {k: None if m is None else _Serialised(m, lock) for k, m in models.items()}
     summary: dict = {"run_id": run_id, "created": datetime.now(UTC).isoformat(timespec="seconds"),
                      "episodes": episodes_label, "split": split, "n_episodes": len(episodes),
-                     "llm": llm.model, "guard_backend": backend, "workers": workers, "versions": {}, "manifests": {},
-                     "metrics": {}}
+                     "llm": llm.model, "guard_backend": backend, "guard_models": fingerprint["guard_models"],
+                     "workers": workers, "versions": {}, "manifests": {}, "metrics": {}}
+    raw_dir = Path(out_dir) / "raw" / run_id if out_dir is not None else None
+    if raw_dir is not None:
+        fp_file = raw_dir / "run.json"
+        if resume and fp_file.exists() and (old := json.loads(fp_file.read_text())) != fingerprint:
+            diff = ", ".join(sorted(k for k in fingerprint if old.get(k) != fingerprint[k]))
+            raise SystemExit(f"--resume: the rows in {raw_dir} come from another configuration ({diff}); "
+                             "use a new --run-id")
+        resume = resume and fp_file.exists()  # rows without a fingerprint (an older run) are played again
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        fp_file.write_text(json.dumps(fingerprint, indent=1) + "\n")
     all_rows: dict[str, list[dict]] = {}
     for name in versions:
         v = resolve_version(name)

@@ -194,3 +194,43 @@ def test_shared_models_are_called_under_one_lock():
 
     m = _Serialised(Model(), lock)
     assert m(1, 2) == 3 and m.score("abc") == 3 and m.label == "x" and seen == [True, True]
+
+
+class DeadLLM(GullibleLLM):
+    """The LLM server is down: every task episode errors fast (review of #19)."""
+
+    model = "fake-gullible"
+
+    def complete(self, messages, tools):
+        raise ConnectionError("vLLM is down")
+
+
+def test_resume_plays_again_a_version_whose_episodes_errored(tmp_path, capsys):
+    episodes = list(eps().values())
+    dead = run(episodes, ["baseline"], tmp_path, "r", DeadLLM(), backend="lexical", workers=4)
+    assert dead["metrics"]["baseline"]["error_rate"]["x"] > 0
+    llm = GullibleLLM()
+    out = run(episodes, ["baseline"], tmp_path, "r", llm, backend="lexical", workers=4, resume=True)
+    assert "not resumed:" in capsys.readouterr().out and llm.meter.calls > 0
+    assert out["metrics"]["baseline"]["error_rate"]["x"] == 0
+
+
+def test_resume_refuses_rows_from_another_configuration(tmp_path):
+    episodes = list(eps().values())
+    run(episodes, ["baseline"], tmp_path, "r", GullibleLLM(), backend="lexical")
+    other = GullibleLLM()
+    other.model = "qwen3:8b"
+    with pytest.raises(SystemExit, match="another configuration \\(llm\\)"):
+        run(episodes, ["baseline"], tmp_path, "r", other, backend="lexical", resume=True)
+    with pytest.raises(SystemExit, match="episodes_sha256"):
+        run(episodes[:-1], ["baseline"], tmp_path, "r", GullibleLLM(), backend="lexical", resume=True)
+
+
+def test_resume_plays_again_rows_without_a_fingerprint(tmp_path):
+    episodes = list(eps().values())
+    run(episodes, ["baseline"], tmp_path, "r", GullibleLLM(), backend="lexical")
+    (tmp_path / "raw" / "r" / "run.json").unlink()  # rows of an older run
+    llm = GullibleLLM()
+    out = run(episodes, ["baseline"], tmp_path, "r", llm, backend="lexical", resume=True)
+    assert llm.meter.calls > 0 and out["guard_models"] == {}
+    assert json.loads((tmp_path / "raw" / "r" / "run.json").read_text())["llm"] == "fake-gullible"

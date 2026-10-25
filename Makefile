@@ -41,11 +41,15 @@ MODEL ?= Qwen/Qwen3-8B
 LLM_URL ?= http://localhost:8000/v1
 WORKERS ?= 16
 RUN_ID ?= brev-test
-BREV_EVAL = MEMLEDGER_DEVICE=cuda PYTHONPATH=. .venv/bin/python -u -m attacks.evaluate --split test --llm openai \
+# HF_HOME: the checker weights brev_setup.sh downloaded (a new shell would otherwise fetch them again into ~/.cache)
+BREV_EVAL = HF_HOME=$${HF_HOME:-/home/ubuntu/workspace/hf-cache} MEMLEDGER_DEVICE=cuda PYTHONPATH=. \
+	.venv/bin/python -u -m attacks.evaluate --split test --llm openai \
 	--model $(MODEL) --base-url $(LLM_URL) --guards hf --out results/attacks
 eval-brev-smoke:  # 1 episode per family on all 5 versions (~5 min): every model loads, no episode errors
 	$(BREV_EVAL) --limit-per-family 1 --workers 4 --run-id $(RUN_ID)-smoke
-eval-brev:  # the final run: whole test split x 5 versions; same RUN_ID again resumes after a crash
+# eval-brev again after a crash resumes: errored versions are played again; a different MODEL/checkers/suite under the
+# same RUN_ID is refused (pass RUN_ID=...)
+eval-brev:  # the final run: test split x 5 versions
 	$(BREV_EVAL) --workers $(WORKERS) --resume --run-id $(RUN_ID)
 eval-latency:  # "added ms" without contention from parallel episodes: 1 worker, 5 episodes per family
 	$(BREV_EVAL) --limit-per-family 5 --workers 1 --run-id $(RUN_ID)-latency
