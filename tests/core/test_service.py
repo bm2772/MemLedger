@@ -435,3 +435,28 @@ def test_a_loop_does_not_hide_an_independent_source():
     assert svc.flag_source(web.id, "poisoned")["quarantined"] == []
     assert svc.store.get_claim(m1).status == Status.ACTIVE and svc.store.get_claim(m2).status == Status.ACTIVE
     assert set(svc.flag_source(paper.id, "retracted")["quarantined"]) == {m1, m2}
+
+
+def test_deep_memory_lattice_is_labelled_in_polynomial_time():
+    """Review of #17: the path-walking check doubled per level (depth 14: 13.9 s per write). Each level has two
+    memories, each supported on its own by either memory below it; flagging the base page must retract all of them,
+    fast, at depth 30."""
+    import time
+
+    depth = 30
+    svc = attributing_service()
+
+    def text(k, x):  # every memory's words are a subset of each memory one level down
+        return "g " + " ".join(f"a{j} b{j}" for j in range(k + 1, depth + 1)) + f" {x}{k}"
+
+    t0 = time.perf_counter()
+    page = svc.ingest("g " + " ".join(f"a{j} b{j}" for j in range(depth + 1)), SourceKind.WEB, ALICE)
+    level = [write(svc, text(0, x), [page.id]) for x in "ab"]
+    claims = list(level)
+    for k in range(1, depth + 1):
+        level = [write(svc, text(k, x), level) for x in "ab"]
+        claims += level
+    assert len(svc.store.derivations_for(level[0])) == 2  # either memory below supports it on its own
+    out = svc.flag_source(page.id, "poisoned")
+    assert set(out["quarantined"]) == set(claims) and len(claims) == 2 * (depth + 1)
+    assert time.perf_counter() - t0 < 10  # 0.3 s here; the path-walking version never finishes
