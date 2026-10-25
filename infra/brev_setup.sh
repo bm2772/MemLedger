@@ -5,7 +5,8 @@
 #      cache, benchmarks in data/, attack suite in data/attacks (same commands as on a Mac)
 #   3. fine-tune the memshield write-time classifier if models/memshield is missing (`make memshield`, minutes on a GPU)
 #   4. start a vLLM OpenAI-compatible server for the 8-12B main model on :$PORT and wait until healthy
-# Usage:  bash brev_setup.sh            (env: MODEL, PORT, MAX_MODEL_LEN, GPU_UTIL, BRANCH, HF_TOKEN, MEMSHIELD_REPO)
+# Usage:  bash brev_setup.sh            (env: MODEL, PORT, MAX_MODEL_LEN, GPU_UTIL, BRANCH, HF_TOKEN, MEMSHIELD_REPO,
+#                                        WORKSPACE, TOOL_PARSER)
 # Then:   make eval-brev-smoke && make eval-brev        (infra/README.md "Final run")
 # The checker models share the GPU with vLLM: GPU_UTIL (default 0.80) leaves them room; use a 40 GB+ GPU (L40S/A100).
 # Qwen3: send {"think": false} / chat_template_kwargs {"enable_thinking": false} with every request; with thinking
@@ -51,8 +52,11 @@ if curl -sf "http://localhost:$PORT/health" >/dev/null; then
   echo "vLLM already running on :$PORT"
 else
   echo "starting vLLM ($MODEL) on :$PORT, log: $LOG"
-  nohup "$VENV/bin/vllm" serve "$MODEL" --host 0.0.0.0 --port "$PORT" \
-    --max-model-len "$MAX_MODEL_LEN" --gpu-memory-utilization "$GPU_UTIL" --served-model-name main "$MODEL" \
+  # FlashInfer's sampler JIT-compiles with nvcc, which many GPU images lack (vLLM then dies after loading); the agent
+  # sends tools, which vLLM refuses (HTTP 400) without a tool-call parser (hermes for Qwen3). Both found on Brev, 26 Oct.
+  VLLM_USE_FLASHINFER_SAMPLER=0 nohup "$VENV/bin/vllm" serve "$MODEL" --host 0.0.0.0 --port "$PORT" \
+    --max-model-len "$MAX_MODEL_LEN" --gpu-memory-utilization "$GPU_UTIL" \
+    --enable-auto-tool-choice --tool-call-parser "${TOOL_PARSER:-hermes}" --served-model-name main "$MODEL" \
     >"$LOG" 2>&1 &
   for _ in $(seq 1 120); do  # weights download + load can take several minutes
     curl -sf "http://localhost:$PORT/health" >/dev/null && break
