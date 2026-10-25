@@ -22,10 +22,10 @@ import re
 from collections.abc import Sequence
 
 from memledger.core.types import Claim, FactSupport, Source, Status, Verdict, WriteProposal
-
-GROUNDING = frozenset({Status.ACTIVE, Status.RESTORED})  # memories that may ground a new one
 from memledger.guards.models import PairScorer, default_support_scorer
 from memledger.guards.text import chunks, normalise, split_facts
+
+GROUNDING = frozenset({Status.ACTIVE, Status.RESTORED})  # memories that may ground a new one
 
 _START = r"(?:\A|(?<=\n)|(?<=[.!?;:] ))"  # text or line start, or right after a sentence end / label colon
 _END = r"[.!?;]?(?=\n|\Z)|[.!?;](?= )"  # line or text end, or a sentence end

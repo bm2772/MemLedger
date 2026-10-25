@@ -397,3 +397,41 @@ def test_joint_fact_still_needs_all_its_sources():
     (d,) = svc.store.derivations_for(cid)
     assert set(d.supported_by) == {a.id, b.id} and d.facts[0].joint
     assert svc.flag_source(b.id, "x")["quarantined"] == [cid]
+
+
+# ---- support must be well-founded (review of #17): a memory cannot hold itself up through a loop
+def loop_service():
+    from memledger.core.factory import build_service
+
+    return build_service("full_no_registry")
+
+
+def test_memory_restated_from_itself_is_still_retracted_with_its_source():
+    svc = loop_service()
+    web = svc.ingest("Vendor Globex ships within 2 days.", SourceKind.WEB, ALICE)
+    m1 = write(svc, "Globex ships within 2 days", [web.id])
+    assert write(svc, "Globex ships within 2 days", [m1]) == m1  # recall-then-remember: m1 now cites itself
+    m2 = write(svc, "Globex delivers within 2 days", [m1])
+    assert set(svc.flag_source(web.id, "poisoned")["quarantined"]) == {m1, m2}
+
+
+def test_two_step_loop_is_still_retracted_with_its_source():
+    svc = loop_service()
+    web = svc.ingest("Vendor Globex ships within 2 days.", SourceKind.WEB, ALICE)
+    m1 = write(svc, "Globex ships within 2 days", [web.id])
+    m2 = write(svc, "Globex delivers within 2 days", [m1])
+    assert write(svc, "Globex ships within 2 days", [m2]) == m1  # m1 re-stated from m2: m1 -> m2 -> m1
+    assert set(svc.flag_source(web.id, "poisoned")["quarantined"]) == {m1, m2}
+
+
+def test_a_loop_does_not_hide_an_independent_source():
+    svc = loop_service()
+    web = svc.ingest("Vendor Globex ships within 2 days.", SourceKind.WEB, ALICE)
+    paper = svc.ingest("Audit: Globex ships within 2 days.", SourceKind.PAPER, ALICE)
+    m1 = write(svc, "Globex ships within 2 days", [web.id])
+    m2 = write(svc, "Globex delivers within 2 days", [m1])
+    write(svc, "Globex ships within 2 days", [m2])  # loop m1 -> m2 -> m1
+    write(svc, "Globex ships within 2 days", [paper.id])  # and a real second source for m1
+    assert svc.flag_source(web.id, "poisoned")["quarantined"] == []
+    assert svc.store.get_claim(m1).status == Status.ACTIVE and svc.store.get_claim(m2).status == Status.ACTIVE
+    assert set(svc.flag_source(paper.id, "retracted")["quarantined"]) == {m1, m2}

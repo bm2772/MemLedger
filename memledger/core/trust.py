@@ -8,6 +8,7 @@ noisy-OR: T = 1 - prod(1 - group value).
 Exposure: a claim that saw a flagged source (in exposed_to) without resting on it (in no supported_by) may still
 have been steered by it, so it is CONTESTED (reason "exposure: ...", trust unchanged) rather than quarantined; so is a
 claim whose every valid justification rests on an exposure-contested claim. One clean justification keeps it active.
+Validity is well-founded: support that loops back to the claim itself does not count.
 It is restored when the cause goes (source unflagged, parent cleared), like a JTMS-quarantined claim.
 """
 
@@ -42,7 +43,30 @@ class TrustEngine:
         return self.store.get_source(pid) is not None or self.store.get_claim(pid) is not None
 
     def is_valid(self, d: Derivation) -> bool:
-        return all(self._parent_trust(p) is not None for p in d.supported_by if self._known(p))
+        """Well-founded support (Doyle's JTMS): no flagged source, and every parent claim holds without leaning on d's
+        own claim, directly or through other claims. So a memory re-stated from itself, or a loop m1 -> m2 -> m1,
+        cannot keep itself up once its real source is gone (review of #17)."""
+        return self._grounded_derivation(d, frozenset({d.claim_id}))
+
+    def _grounded_derivation(self, d: Derivation, avoid: frozenset[str]) -> bool:
+        for pid in d.supported_by:
+            if (s := self.store.get_source(pid)) is not None:
+                if s.flagged:
+                    return False
+            elif self.store.get_claim(pid) is not None and not self._grounded(pid, avoid):
+                return False
+        return True  # unknown ids are ignored, as before
+
+    def _grounded(self, claim_id: str, avoid: frozenset[str]) -> bool:
+        """The claim has a justification whose support never passes through `avoid` (the claims already on the path).
+        Decided from the graph, not from the stored status, so it does not depend on the order of a recompute; only
+        a non-JTMS quarantine (integrity) rules a claim out by itself."""
+        if claim_id in avoid:
+            return False
+        claim = self.store.get_claim(claim_id)
+        if claim.status == Status.QUARANTINED and not self._jtms_quarantined(claim_id):
+            return False
+        return any(self._grounded_derivation(pd, avoid | {claim_id}) for pd in self.store.derivations_for(claim_id))
 
     def derivation_trust(self, d: Derivation) -> float:
         trusts = [t for p in d.supported_by if (t := self._parent_trust(p)) is not None]
