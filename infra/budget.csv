@@ -1,2 +1,3 @@
 date,member,instance,gpu,hours,usd,purpose,prompt_tokens,completion_tokens
 2026-10-25,M3,mac-m4-local,Apple M4 16GB (MPS),0.16,0,memshield fine-tune deberta-v3-base 3 epochs (plus ~1.8 h of failed fp16/swapping attempts),0,0
+2026-10-26,M1,brev-massedcompute-L40,L40 48GB,3.40,3.60,final test runs: Qwen3-8B + latency + Qwen3-32B-FP8,20404026,897118
