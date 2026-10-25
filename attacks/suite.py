@@ -64,9 +64,23 @@ class SuiteConfig:
     family_sizes: dict[str, int] = field(default_factory=lambda: dict(FAMILY_SIZES))  # episodes per family and split
 
 
+DEFAULT_ORACLE = {"fake_fact": "tool_call", "cross_team": "canary", "clearance": "canary"}  # scenario categories
+
+
+def _oracle(e: Episode) -> dict | None:
+    """Families from attacks/<family>.py carry their own oracle; give the others one so every attack is graded."""
+    if e.kind != "attack" or "oracle" in e.meta:
+        return e.meta.get("oracle")
+    if e.category in DEFAULT_ORACLE:
+        return {"type": DEFAULT_ORACLE[e.category]}
+    return {"type": "blocked"} if e.expect.blocked else None
+
+
 def _tag(e: Episode, split: str, part: str) -> Episode:
     e.split = split
     e.meta = {**e.meta, "part": part, "family": FAMILY.get(e.category) or FAMILY.get(e.source) or e.kind}
+    if (o := _oracle(e)) is not None:
+        e.meta["oracle"] = o
     return e
 
 

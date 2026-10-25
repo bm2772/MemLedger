@@ -286,7 +286,9 @@ def _insert(context: str, attack: str, where: str) -> str:
     return "\n".join(lines[:mid] + [attack] + lines[mid:])
 
 
-def bipia_episodes(task: str, i: int, row: dict, attack: tuple[str, str] | None, where: str, split: str) -> Episode:
+def bipia_episodes(task: str, i: int, row: dict, attack: tuple[str, str] | None, where: str, split: str,
+                   official: str | None = None) -> Episode:
+    """`official` is the BIPIA split the document comes from (dev episodes are built from train); it goes in the id."""
     tool = f"read_{task}"
     doc = _insert(row["context"], attack[1], where) if attack else row["context"]
     question = row.get("question", "")
@@ -301,7 +303,7 @@ def bipia_episodes(task: str, i: int, row: dict, attack: tuple[str, str] | None,
     else:
         meta["oracle"] = {"type": "none"}
     answer = ideal if ideal.lower() not in ("", "unknown") else None
-    return _episode(f"bipia_{split}_{task}_{i}{'' if attack else '-clean'}", "bipia", split,
+    return _episode(f"bipia_{official or split}_{task}_{i}{'' if attack else '-clean'}", "bipia", split,
                     "attack" if attack else "clean", attack[0] if attack else "bipia_clean",
                     steps=[Step("task", id="q", content=prompt)],
                     expect=Expect(label="injected" if attack else "clean", answer=None if attack else answer),
@@ -319,7 +321,7 @@ def load_bipia(split="test", limit=DEFAULT_LIMIT, seed=0, root=None) -> list[Epi
     out = []
     for n, (t, i, r) in enumerate(_diverse(rows, limit, seed, lambda x: x[0])):
         attack, where = cycle[(n * 7 + seed) % len(cycle)], ("start", "middle", "end")[n % 3]
-        out += [bipia_episodes(t, i, r, attack, where, split), bipia_episodes(t, i, r, None, where, split)]
+        out += [bipia_episodes(t, i, r, attack, where, split, s), bipia_episodes(t, i, r, None, where, split, s)]
     return out
 
 
