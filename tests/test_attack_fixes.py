@@ -226,4 +226,4 @@ def test_registry_contribution_is_visible_between_full_and_full_no_registry(dev)
     a = res["attribution"]["fired"]
     assert a["full"].get("registry match", 0) + a["full"].get("registry binding", 0) > 0
     assert not a["full_no_registry"].get("registry match") and not a["full_no_registry"].get("registry binding")
-    assert "What the registry adds" in md and "legit payment denied" in md
+    assert "What the registry adds" in md and "legit payment held or refused" in md

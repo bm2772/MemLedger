@@ -28,9 +28,9 @@ def test_recomputed_tables_match_and_catch_a_wrong_count(tmp_path, monkeypatch):
     assert recompute.compare(tmp_path / "r", tmp_path / "raw" / "r", meta) == []
     f = tmp_path / "r" / "families.json"
     d = json.loads(f.read_text())
-    d["overall"]["full"]["attack_success"]["x"] += 1
+    d["overall"]["full"]["oracle_attack_success"]["x"] += 1
     f.write_text(json.dumps(d))
-    assert any("full attack_success" in m for m in recompute.compare(tmp_path / "r", tmp_path / "raw" / "r", meta))
+    assert any("full oracle_attack_success" in m for m in recompute.compare(tmp_path / "r", tmp_path / "raw" / "r", meta))
 
 
 def test_verdicts_do_not_depend_on_episode_or_version_order(monkeypatch):

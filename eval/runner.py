@@ -85,9 +85,12 @@ def record(ep: Episode, version: str, res: EpisodeResult | None, svc, error: str
             rec["ingests"].append({"id": sid, "session": st.session, "kind": src.kind.value,
                                    "poison": ep.is_poison(st, st.content),
                                    "blocked": any(h["reason"].startswith("input screen") for h in hist)})
+        fetched_by = {cid: names.get(run.session, ep.default_session)
+                      for run in res.runs.values() for cid in run.context_ids}
         for src in res.tool_ingests:  # documents and tool outputs the agent fetched (read_web, benchmark data tools)
             hist = svc.store.status_history(src.id)
-            rec["ingests"].append({"id": src.id, "session": ep.default_session, "kind": src.kind.value,
+            rec["ingests"].append({"id": src.id, "session": fetched_by.get(src.id, ep.default_session),
+                                   "kind": src.kind.value,
                                    "poison": any(m in src.content for m in ep.poison_markers),
                                    "blocked": any(h["reason"].startswith("input screen") for h in hist)})
         for sid, wr in res.proposals.items():
@@ -223,8 +226,8 @@ def point_estimates(m: dict) -> dict:
 
 
 def table(summary: dict) -> str:
-    cols = ["n_episodes", "n_errors", "poison_stored_rate", "attack_success_rate", "leak_rate", "task_accuracy",
-            "false_denial_rate", "false_rejection_rate", "approval_load", "write_ms_median", "read_ms_median",
+    cols = ["n_episodes", "n_errors", "poison_stored_rate", "hijacked_action_rate", "leak_rate", "task_accuracy",
+            "legit_not_completed_rate", "gate_denial_rate", "false_rejection_rate", "approval_load", "write_ms_median", "read_ms_median",
             "wall_s_mean", "llm_completion_tokens"]
 
     def fmt(x) -> str:
