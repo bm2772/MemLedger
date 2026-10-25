@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import functools
 import re
 import sqlite3
+import threading
 from datetime import datetime
 
 from memledger.core.types import Claim, Derivation, Integrity, Labels, Source, SourceKind, Status, now
@@ -50,6 +52,7 @@ class SQLiteStore:
     """Append-only provenance store; status changes live in status_log, never in place."""
 
     def __init__(self, path: str = ":memory:") -> None:
+        self.lock = threading.RLock()  # one connection shared by all threads: every public method holds this (F4)
         self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
@@ -252,3 +255,21 @@ class SQLiteStore:
     def latest_root(self) -> dict | None:
         r = self.conn.execute("SELECT * FROM hash_log ORDER BY seq DESC LIMIT 1").fetchone()
         return dict(r) if r else None
+
+
+def locked(cls: type) -> type:
+    """Wrap every public method of `cls` in `self.lock` (an RLock, so methods can call each other)."""
+    def wrap(fn):
+        @functools.wraps(fn)
+        def inner(self, *args, **kwargs):
+            with self.lock:
+                return fn(self, *args, **kwargs)
+        return inner
+
+    for name, fn in list(vars(cls).items()):
+        if callable(fn) and not name.startswith("_"):
+            setattr(cls, name, wrap(fn))
+    return cls
+
+
+locked(SQLiteStore)

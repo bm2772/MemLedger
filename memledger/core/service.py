@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import threading
 import time
 import uuid
 from collections.abc import Callable
@@ -32,7 +33,7 @@ from memledger.core.types import (
 )
 from memledger.retrieval.retriever import Retriever
 from memledger.store.index import InMemoryIndex, VectorIndex
-from memledger.store.sqlite import SQLiteStore
+from memledger.store.sqlite import SQLiteStore, locked
 
 
 def item_hash(content: str, recorded_at: datetime, parent_hashes: list[str], labels: Labels | None = None) -> str:
@@ -51,6 +52,7 @@ def _new_id(prefix: str) -> str:
     return f"{prefix}{uuid.uuid4().hex}"
 
 
+@locked  # a write is several store calls plus a signed anchor: serialise whole operations (F4)
 class LedgerService:
     def __init__(
         self,
@@ -69,6 +71,7 @@ class LedgerService:
         scoped: bool = True,
         jtms: bool = True,
     ) -> None:
+        self.lock = threading.RLock()
         self.store = store or SQLiteStore()
         self.index = index or InMemoryIndex()
         self.checks = list(checks or [])
