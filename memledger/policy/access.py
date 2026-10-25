@@ -14,7 +14,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 
 from memledger.core.types import Integrity, Labels, RetrievedMemory, Session, Source, Verdict, WriteProposal
-from memledger.policy.items import Item, Resolver, integrity_of, resolver
+from memledger.policy.items import Item, Resolver, integrity_of, resolver, taints_sending
 
 SHARED = "shared"
 RolePolicy = Callable[[Session, Labels], bool]
@@ -35,7 +35,8 @@ class AccessControl:
         self.roles = {**DEFAULT_ROLES, **(roles or {})}
         self.resolve = resolve
         self.tainted_score_cap = tainted_score_cap
-        self._taint: dict[Session, list[str]] = {}
+        self._taint: dict[Session, list[str]] = {}  # untrusted content read: I3 and I4
+        self._send_taint: dict[Session, list[str]] = {}  # tool output read: I4 only
         self.log: list[dict] = []
 
     def attach(self, memory: object) -> AccessControl:
@@ -65,11 +66,14 @@ class AccessControl:
 
     # ---- I3-I5: taint
     def observe(self, session: Session, items: Iterable[Item | Source | str]) -> None:
-        """Record what a session has read; anything untrusted taints it."""
+        """Record what a session has read; anything untrusted taints it (I3, I4); tool output only blocks
+        sending (I4), since its content is not untrusted (policy/items.py)."""
         for x in items:
             item = self._item(x)
             if item is None or integrity_of(item) == Integrity.UNTRUSTED:
                 self._taint.setdefault(session, []).append(item.id if item else str(x))
+            elif taints_sending(item):
+                self._send_taint.setdefault(session, []).append(item.id)
 
     def _item(self, x: Item | Source | str) -> Item | None:
         if isinstance(x, Item):
@@ -81,6 +85,9 @@ class AccessControl:
     def tainted(self, session: Session) -> bool:
         return bool(self._taint.get(session))
 
+    def send_tainted(self, session: Session) -> bool:
+        return self.tainted(session) or bool(self._send_taint.get(session))
+
     def taint_reasons(self, session: Session) -> list[str]:
         return list(self._taint.get(session, []))
 
@@ -88,16 +95,18 @@ class AccessControl:
         return not self.tainted(session)
 
     def can_send_out(self, session: Session) -> bool:  # I4
-        return not self.tainted(session)
+        return not self.send_tainted(session)
 
     def end_session(self, session: Session) -> None:  # I5
         self._taint.pop(session, None)
+        self._send_taint.pop(session, None)
         self.log.append({"event": "session_end", "user": session.user_id})
 
     def clear_taint(self, session: Session, approval: object) -> None:  # I5: only a person's approval
         if getattr(approval, "status", None) != "approved" or getattr(approval, "user_id", None) != session.user_id:
             raise AccessDenied("taint can only be cleared by an approved request of this user")
         self._taint.pop(session, None)
+        self._send_taint.pop(session, None)
         self.log.append({"event": "taint_cleared", "user": session.user_id,
                          "approval": getattr(approval, "id", None), "reviewer": getattr(approval, "reviewer", None)})
 

@@ -101,4 +101,16 @@ def test_verbatim_shortcut_respects_token_boundaries():
     never = HallucinationCheck(scorer=lambda d, c: 0.0)
     assert never.check(prop("Acme account 98"), [src("Acme account 9876 is used")]).ok is False
     assert never.check(prop("pay 1,000"), [src("Please pay 1,000,000 today")]).ok is False
-    assert never.check(prop("pay 1,000"), [src("Please pay 1,000 today.")]).ok is True
+    assert never.check(prop("Please pay 1,000 today"), [src("Note: Please pay 1,000 today. Thanks.")]).ok is True
+
+
+def test_verbatim_shortcut_needs_whole_sentences():
+    """A clause inside a negated or reported sentence is not support: the model decides (review of #16)."""
+    never = HallucinationCheck(scorer=lambda d, c: 0.0)
+    for doc, claim in [("It is false that the CEO approved the merger.", "the CEO approved the merger"),
+                       ("Scammers claim the support line is 555-0199; it is not ours.", "the support line is 555-0199"),
+                       ("Please pay 1,000 today.", "pay 1,000")]:
+        v = never.check(prop(claim), [src(doc)])
+        assert not v.ok and v.score == 0.0, (doc, v.reason)
+    assert never.check(prop("The CEO approved the merger."), [src("Board notes.\nThe CEO approved the merger.")]).ok
+    assert never.check(prop("The CEO approved the merger"), [src("Q3: the CEO approved the merger; shares rose.")]).ok
