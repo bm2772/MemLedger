@@ -79,7 +79,7 @@ def benchmark_block(episodes: list[Episode], rows: dict[str, list[dict]]) -> tup
     md = ["", ("Benchmark episodes (agent runs with the benchmark payload; attack success by the per-episode oracle, "
                "'harmless blocked' = clean-twin writes rejected / clean tool outputs quarantined, 'top mechanism' = what "
                "most often stopped an attack):"), "",
-          ("| benchmark | version | attack success | harmless write rejected | clean input quarantined | "
+          ("| benchmark | version | oracle attack success | harmless write rejected | clean input quarantined | "
            "clean task accuracy | LLM calls | top mechanism |"), "|---" * 8 + "|"]
     for src in sources:
         for v, rs in rows.items():
@@ -91,7 +91,9 @@ def benchmark_block(episodes: list[Episode], rows: dict[str, list[dict]]) -> tup
             top_s = ", ".join(f"{k} {n}" for k, n in top.most_common(2)) or "–"
             calls = sum(r["llm"]["calls"] for r in mine)
             res.setdefault(src, {})[v] = {
-                "attack_success": Rate.of(sum(verdicts), len(verdicts)).__dict__, "llm_calls": calls,
+                "oracle_attack_success": Rate.of(sum(verdicts), len(verdicts)).__dict__,
+                "attack_success": Rate.of(sum(verdicts), len(verdicts)).__dict__,  # deprecated alias (F6)
+                "llm_calls": calls,
                 "harmless_write_rejected": m["false_rejection_rate"] if m else None,
                 "clean_input_quarantined": m["input_false_block_rate"] if m else None,
                 "clean_task_accuracy": m["task_accuracy"] if m else None, "blocked_by": dict(top)}
@@ -104,9 +106,10 @@ def benchmark_block(episodes: list[Episode], rows: dict[str, list[dict]]) -> tup
 def tables(episodes: list[Episode], rows: dict[str, list[dict]]) -> tuple[dict, str]:
     """(JSON-able results, markdown) from the raw rows of each version."""
     res: dict = {"overall": {}, "families": {}}
-    head = ("| version | attack success | leak rate | tamper detection | side-channel count leak | benign task accuracy | "
-            "legit payment denied | harmless write rejected | added write ms | added read ms | added gate ms |")
-    md = [head, "|---" * 11 + "|"]
+    head = ("| version | oracle attack success | hijacked action | leak rate | tamper detection | side-channel count leak | "
+            "benign task accuracy | legit payment not completed correctly | legit payment held or refused (false denial) | "
+            "harmless write rejected | added write ms | added read ms | added gate ms |")
+    md = [head, "|---" * 13 + "|"]
     base = None
     for v, rs in rows.items():
         o = overall(episodes, rs)
@@ -115,14 +118,21 @@ def tables(episodes: list[Episode], rows: dict[str, list[dict]]) -> tuple[dict, 
         base = base or med
         added = {op: (None if med[op] is None or base[op] is None else med[op] - base[op]) for op in med}
         sc = o["side_channel"]
-        res["overall"][v] = {"attack_success": o["attack_success"].__dict__, "leak_rate": m["leak_rate"],
+        res["overall"][v] = {"oracle_attack_success": o["oracle_attack_success"].__dict__,
+                             "attack_success": o["oracle_attack_success"].__dict__,  # deprecated alias (F6)
+                             "hijacked_action_rate": m["hijacked_action_rate"], "leak_rate": m["leak_rate"],
                              "tamper_detected": o["tamper_detected"].__dict__, "task_accuracy": m["task_accuracy"],
                              "side_channel_count_leak": sc["count_leak"].__dict__,
                              "side_channel_timing_diff_ms": sc["timing_diff_ms"],
-                             "false_denial_rate": m["false_denial_rate"], "false_rejection_rate": m["false_rejection_rate"],
+                             "legit_not_completed_rate": m["legit_not_completed_rate"],
+                             "gate_denial_rate": m["gate_denial_rate"],
+                             "false_denial_rate": m["legit_not_completed_rate"],  # deprecated alias (F1)
+                             "false_rejection_rate": m["false_rejection_rate"],
                              "median_ms": med, "added_ms": added, "errors": m["error_rate"]["x"]}
-        md.append(f"| {v} | {o['attack_success'].text()} | {_rate(m['leak_rate'])} | {o['tamper_detected'].text()} | "
-                  f"{sc['count_leak'].text()} | {_rate(m['task_accuracy'])} | {_rate(m['false_denial_rate'])} | "
+        md.append(f"| {v} | {o['oracle_attack_success'].text()} | {_rate(m['hijacked_action_rate'])} | "
+                  f"{_rate(m['leak_rate'])} | {o['tamper_detected'].text()} | "
+                  f"{sc['count_leak'].text()} | {_rate(m['task_accuracy'])} | {_rate(m['legit_not_completed_rate'])} | "
+                  f"{_rate(m['gate_denial_rate'])} | "
                   f"{_rate(m['false_rejection_rate'])} | {_ms(added['write'])} | {_ms(added['read'])} | "
                   f"{_ms(added['gate'])} |")
         res["families"][v] = by_family(episodes, rs)
@@ -136,14 +146,17 @@ def tables(episodes: list[Episode], rows: dict[str, list[dict]]) -> tuple[dict, 
             md.append(f"| {fam} | {n} | " + " | ".join(
                 _rate(key(res["families"][v].get(fam))) for v in rows) + " |")
 
-    block("Attack success per family (oracle of attacks/oracle.py):", lambda d: d and d["attack_success"], fams, "n_attack")
+    block("Oracle attack success per family (attacks/oracle.py):", lambda d: d and d["oracle_attack_success"], fams,
+          "n_attack")
     block("Leak rate per family (a marker the user may not see appeared in anything visible):",
           lambda d: d and d["leak"], fams, "n_attack")
     block("Tamper detection per family (tampered item withheld and quarantined, read from the service state):",
           lambda d: d and d["tamper_detected"], [f for f in fams if any(
               res["families"][v].get(f, {}).get("tamper_detected") for v in rows)], "n_attack")
-    for title, k in (("Legit payment denied per family (benign twins and clean payments; the payment was not made correctly):",
-                      "false_denial_rate"),
+    for title, k in ((("Legit payment not completed correctly per family (benign twins and clean payments; not made, or "
+                      "made to a wrong account):"), "legit_not_completed_rate"),
+                     ("Legit payment held or refused per family (false denial: the gate or registry stopped it):",
+                      "gate_denial_rate"),
                      ("Harmless write rejected per family (benign twins and clean episodes):", "false_rejection_rate"),
                      ("Benign task accuracy per family:", "task_accuracy")):
         block(title, lambda d, k=k: d and d["metrics"][k], [f for f in allf if any(

@@ -24,3 +24,25 @@ def test_app_renders_and_runs_every_tab():
     tamper = next(b for b in at.button if b.label.startswith("Tamper"))
     tamper.click().run()
     assert not at.exception and any(s.value.startswith("Detected") for s in at.success)
+
+
+def test_isolation_and_attack_family_tabs():
+    at = st_testing.AppTest.from_file(APP, default_timeout=120).run()
+    next(b for b in at.button if b.label == "Ask on both systems").click().run()
+    assert not at.exception
+    assert any(e.value.startswith("**Leaked**") for e in at.error)
+    assert any(s.value.startswith("**Withheld.**") for s in at.success)
+    at.multiselect[0].set_value(["minja", "db_tamper"]).run()
+    next(b for b in at.button if b.label == "Run selected families").click().run()
+    assert not at.exception
+    rows = at.dataframe[-1].value
+    assert list(rows["family"]) == ["minja", "db_tamper"]
+    assert set(rows["plain memory"]) == {"attack worked"} and set(rows["MemLedger"]) == {"defended"}
+
+
+def test_results_tab_explains_how_to_generate_missing_results(monkeypatch, tmp_path):
+    monkeypatch.setenv("MEMLEDGER_RESULTS_MD", str(tmp_path / "missing.md"))
+    at = st_testing.AppTest.from_file(APP, default_timeout=60).run()
+    assert not at.exception and any("missing" in w.value for w in at.warning)
+    cmds = " ".join(c.value for c in at.code)
+    assert "scenarios.generator" in cmds and "--llm fake --guards lexical" in cmds

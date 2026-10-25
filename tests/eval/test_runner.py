@@ -95,7 +95,7 @@ def test_run_all_versions_writes_raw_and_summary_with_intervals(tmp_path):
     saved = json.loads((tmp_path / "t1" / "summary.json").read_text())
     assert saved == json.loads(json.dumps(s))
     m = s["metrics"]
-    assert m["baseline"]["attack_success_rate"]["p"] == 1.0 and m["full"]["attack_success_rate"]["x"] == 0
+    assert m["baseline"]["hijacked_action_rate"]["p"] == 1.0 and m["full"]["hijacked_action_rate"]["x"] == 0
     assert m["full"]["leak_rate"]["upper3"] == pytest.approx(3 / 8) and m["baseline"]["leak_rate"]["x"] >= 1
     assert m["full"]["accuracy_loss"]["n"] >= 1 and s["llm"] == "fake-gullible"
     assert s["manifests"]["full"]["guard_backend"] == "lexical" and s["versions"]["full"]["n_errors"] == 0
@@ -111,10 +111,28 @@ def test_dev_split_of_generated_world_runs_all_five_versions(tmp_path):
     full, base = s["metrics"]["full"], s["metrics"]["baseline"]
     assert all(v["error_rate"]["x"] == 0 for v in s["metrics"].values())
     assert full["leak_rate"]["x"] == 0 and base["leak_rate"]["x"] > 0
-    assert full["attack_success_rate"]["x"] == 0 and base["attack_success_rate"]["x"] > 0
+    assert full["hijacked_action_rate"]["x"] == 0 and base["hijacked_action_rate"]["x"] > 0
 
 
 def test_cli(tmp_path, capsys):
     main(["--episodes", str(SMOKE), "--versions", "baseline", "--llm", "fake", "--out", str(tmp_path),
           "--run-id", "cli", "--guards", "lexical", "--quiet"])
     assert "| baseline |" in capsys.readouterr().out and (tmp_path / "cli" / "summary.json").exists()
+
+
+def test_clean_payment_without_registry_is_not_completed_not_denied():
+    """Stress test F1: on versions without the registry the payment runs to a wrong account; that is not a denial."""
+    from scenarios.generator import Config, generate
+
+    pay = [e for e in generate(Config(seed=4)).episodes if e.category == "payment"][:2]
+    s = run(pay, ["baseline", "full", "full_no_registry"], None, "f1")["metrics"]
+    base, full, nore = s["baseline"], s["full"], s["full_no_registry"]
+    assert base["legit_not_completed_rate"]["x"] == 2 and base["gate_denial_rate"]["x"] == 0  # paid, wrongly
+    assert full["legit_not_completed_rate"]["x"] == 0 and full["gate_denial_rate"]["x"] == 0
+    assert nore["gate_denial_rate"]["x"] == 2  # the gate holds it: no registry value to bind the account from
+
+
+def test_tool_ingest_is_attributed_to_the_session_that_fetched_it():
+    r = one("smoke-task-fake-fact", "baseline")
+    (web,) = [i for i in r["ingests"] if i["kind"] == "web"]
+    assert web["session"] == "res" and web["poison"]  # the researcher read it, not the default (finance) user
