@@ -68,3 +68,17 @@ def test_cli_session_and_summary(tmp_path, capsys):
     main(["--path", str(p), "summary"])
     out = capsys.readouterr().out
     assert "1.00" in out and "999.00" in out
+
+
+def test_session_takes_tokens_from_an_eval_summary(tmp_path):
+    import json
+
+    summary = tmp_path / "summary.json"
+    summary.write_text(json.dumps({"metrics": {
+        "baseline": {"llm": {"calls": 3, "prompt_tokens": 100, "completion_tokens": 10}},
+        "full": {"llm": {"calls": 4, "prompt_tokens": 250, "completion_tokens": 30}}}}))
+    p = tmp_path / "budget.csv"
+    main(["--path", str(p), "session", "--member", "M4", "--instance", "brev-l40s", "--gpu", "L40S", "--hours", "1.5",
+          "--rate", "1.2", "--purpose", "final test run", "--from-summary", str(summary)])
+    (r,) = rows(p)
+    assert (r["prompt_tokens"], r["completion_tokens"], r["usd"]) == ("350", "40", "1.80")

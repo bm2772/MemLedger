@@ -136,3 +136,61 @@ def test_tool_ingest_is_attributed_to_the_session_that_fetched_it():
     r = one("smoke-task-fake-fact", "baseline")
     (web,) = [i for i in r["ingests"] if i["kind"] == "web"]
     assert web["session"] == "res" and web["poison"]  # the researcher read it, not the default (finance) user
+
+
+# ---- concurrency and resume (Brev run: vLLM serves episodes in parallel; a crashed run restarts where it stopped)
+def outcome(r):
+    return (r["episode"], r["correct"], r["expected_calls_ok"], r["hijacked"], r["error"], len(r["leaks"]),
+            [w["accepted"] for w in r["writes"]], r["llm"]["calls"])
+
+
+def test_workers_give_the_same_rows_in_order_with_per_episode_token_counts(tmp_path):
+    episodes = list(eps().values())
+    seq = run(episodes, ["baseline", "full"], tmp_path / "a", "seq", GullibleLLM(), backend="lexical")
+    llm = GullibleLLM()
+    par = run(episodes, ["baseline", "full"], tmp_path / "b", "par", llm, backend="lexical", workers=4)
+    for v in ("baseline", "full"):
+        a = [json.loads(x) for x in (tmp_path / "a" / "raw" / "seq" / f"{v}.jsonl").read_text().splitlines()]
+        b = [json.loads(x) for x in (tmp_path / "b" / "raw" / "par" / f"{v}.jsonl").read_text().splitlines()]
+        assert [outcome(r) for r in a] == [outcome(r) for r in b]
+        assert seq["metrics"][v]["llm"] == par["metrics"][v]["llm"]
+    assert par["workers"] == 4 and llm.meter.calls == sum(  # the shared client still holds the run totals
+        r["llm"]["calls"] for v in ("baseline", "full")
+        for r in map(json.loads, (tmp_path / "b" / "raw" / "par" / f"{v}.jsonl").read_text().splitlines()))
+
+
+def test_resume_keeps_complete_versions_and_reruns_the_rest(tmp_path, capsys):
+    episodes = list(eps().values())
+    run(episodes, ["baseline"], tmp_path, "r", GullibleLLM(), backend="lexical")
+    llm = GullibleLLM()
+    out = run(episodes, ["baseline", "full"], tmp_path, "r", llm, backend="lexical", resume=True)
+    assert "[baseline] resumed: 8 episodes" in capsys.readouterr().out
+    assert set(out["metrics"]) == {"baseline", "full"} and out["manifests"]["baseline"]["version"] == "baseline"
+    full_calls = out["metrics"]["full"]["llm"]["calls"]
+    assert llm.meter.calls == full_calls  # only `full` was played
+    (tmp_path / "raw" / "r" / "full.jsonl").write_text("")  # an incomplete version is played again
+    again = GullibleLLM()
+    run(episodes, ["baseline", "full"], tmp_path, "r", again, backend="lexical", resume=True)
+    assert again.meter.calls == full_calls
+
+
+def test_shared_models_are_called_under_one_lock():
+    import threading
+
+    from eval.runner import _Serialised
+
+    lock, seen = threading.Lock(), []
+
+    class Model:
+        label = "x"
+
+        def __call__(self, a, b):
+            seen.append(lock.locked())
+            return a + b
+
+        def score(self, t):
+            seen.append(lock.locked())
+            return len(t)
+
+    m = _Serialised(Model(), lock)
+    assert m(1, 2) == 3 and m.score("abc") == 3 and m.label == "x" and seen == [True, True]

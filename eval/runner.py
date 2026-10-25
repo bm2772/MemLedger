@@ -7,14 +7,23 @@ Each episode runs through M3's memledger.agent.runner.run_episode (seeds first, 
 task / tool / flag) on a fresh service from M1's factory. `task` steps call the LLM agent. Output:
 results/raw/<run_id>/<version>.jsonl (one record per episode, gitignored: copy it off Brev) and
 results/<run_id>/summary.json (metrics with 95% intervals, eval/metrics.py). docs/results.md: python -m eval.report.
+
+workers > 1 plays episodes concurrently (threads; each episode has its own service, so only the LLM client and the
+checker models are shared): vLLM serves the requests in parallel. Each episode gets its own copy of the LLM client so
+its token counts stay its own, and the checker models are called under one lock. Latencies measured with workers > 1
+include contention, so take the "added ms" numbers from a workers = 1 run. resume=True keeps a version whose raw rows
+already cover these episodes (a run that died half-way restarts at the first unfinished version).
 """
 
 from __future__ import annotations
 
 import argparse
+import copy
 import json
+import threading
 import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -175,26 +184,86 @@ def make_llm(kind: str = "fake", model: str | None = None, base_url: str | None 
     return MeteredLLM(model=model or "qwen3:8b", base_url=base_url, think=think, timeout=300)
 
 
+class _Serialised:
+    """A checker model shared by worker threads: every call (and method call) runs under one lock."""
+
+    def __init__(self, model, lock: threading.Lock) -> None:
+        self._model, self._lock = model, lock
+
+    def __call__(self, *args, **kwargs):
+        with self._lock:
+            return self._model(*args, **kwargs)
+
+    def __getattr__(self, name: str):
+        attr = getattr(self._model, name)
+        if not callable(attr):
+            return attr
+
+        def locked(*args, **kwargs):
+            with self._lock:
+                return attr(*args, **kwargs)
+        return locked
+
+
+def _own_llm(llm):
+    """A copy of the LLM client with its own token meter (per-episode counts under concurrency)."""
+    mine = copy.copy(llm)
+    mine.meter = type(llm.meter)()
+    return mine
+
+
+def _resumed(path: Path, episodes: list[Episode]) -> list[dict] | None:
+    if not path.exists():
+        return None
+    rows = [json.loads(x) for x in path.read_text().splitlines() if x.strip()]
+    return rows if [r["episode"] for r in rows] == [e.id for e in episodes] else None
+
+
+def _play(episodes: list[Episode], v: Version, llm, models: dict, backend: str, workers: int,
+          progress: bool) -> tuple[list[dict], dict | None]:
+    def one(i: int) -> tuple[int, dict, dict]:
+        mine = _own_llm(llm)
+        row, m = run_one(episodes[i], v, mine, models, backend)
+        for k in ("calls", "prompt_tokens", "completion_tokens"):
+            setattr(llm.meter, k, getattr(llm.meter, k) + getattr(mine.meter, k))  # run totals; under the GIL
+        return i, row, m
+
+    rows: list[dict | None] = [None] * len(episodes)
+    manifest = None
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        futures = [pool.submit(one, i) for i in range(len(episodes))]
+        for done, fut in enumerate(as_completed(futures), 1):
+            i, row, m = fut.result()
+            rows[i], manifest = row, manifest or m
+            if progress:
+                print(f"[{v.name} {done}/{len(episodes)}] {episodes[i].id} {row['wall_s']:.1f}s"
+                      f"{' ERROR ' + row['error'] if row['error'] else ''}", flush=True)
+    return rows, manifest
+
+
 def run(episodes: list[Episode], versions: list[str], out_dir: str | Path | None, run_id: str, llm=None,
         backend: str | None = None, episodes_label: str = "", split: str | None = None,
-        progress: bool = False) -> dict:
+        progress: bool = False, workers: int = 1, resume: bool = False) -> dict:
     llm = llm or GullibleLLM()
     backend = backend or guard_backend()
     models = load_guard_models(backend)
+    if workers > 1:
+        lock = threading.Lock()
+        models = {k: None if m is None else _Serialised(m, lock) for k, m in models.items()}
     summary: dict = {"run_id": run_id, "created": datetime.now(UTC).isoformat(timespec="seconds"),
                      "episodes": episodes_label, "split": split, "n_episodes": len(episodes),
-                     "llm": llm.model, "guard_backend": backend, "versions": {}, "manifests": {}, "metrics": {}}
+                     "llm": llm.model, "guard_backend": backend, "workers": workers, "versions": {}, "manifests": {},
+                     "metrics": {}}
     all_rows: dict[str, list[dict]] = {}
     for name in versions:
         v = resolve_version(name)
-        rows, manifest = [], None
-        for i, ep in enumerate(episodes):
-            row, m = run_one(ep, v, llm, models, backend)
-            rows.append(row)
-            manifest = manifest or m
-            if progress:
-                print(f"[{v.name} {i + 1}/{len(episodes)}] {ep.id} {row['wall_s']:.1f}s"
-                      f"{' ERROR ' + row['error'] if row['error'] else ''}", flush=True)
+        raw_file = Path(out_dir) / "raw" / run_id / f"{v.name}.jsonl" if out_dir is not None else None
+        rows = _resumed(raw_file, episodes) if resume and raw_file is not None else None
+        if rows is not None:
+            manifest = build(v, episodes[0].registry, models, backend=backend).manifest if episodes else None
+            print(f"[{v.name}] resumed: {len(rows)} episodes already in {raw_file}", flush=True)
+        else:
+            rows, manifest = _play(episodes, v, llm, models, backend, workers, progress)
         all_rows[v.name] = rows
         metrics = compute(rows)
         summary["metrics"][v.name] = metrics
@@ -254,11 +323,14 @@ def main(argv: list[str] | None = None) -> dict:
     ap.add_argument("--out", default="results")
     ap.add_argument("--run-id", default=datetime.now(UTC).strftime("%Y%m%d-%H%M%S"))
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--workers", type=int, default=1, help="episodes played concurrently (vLLM: 16); latency: 1")
+    ap.add_argument("--resume", action="store_true", help="keep versions whose raw rows for this run id are complete")
     a = ap.parse_args(argv)
     eps = load_episodes(a.episodes, a.split, a.limit, a.categories.split(",") if a.categories else None)
     llm = make_llm(a.llm, a.model, a.base_url, think=True if a.think else None)
     summary = run(eps, [v.strip() for v in a.versions.split(",") if v.strip()], a.out, a.run_id, llm,
-                  backend=a.guards, episodes_label=a.episodes, split=a.split, progress=not a.quiet)
+                  backend=a.guards, episodes_label=a.episodes, split=a.split, progress=not a.quiet,
+                  workers=a.workers, resume=a.resume)
     print(table(summary))
     return summary
 
