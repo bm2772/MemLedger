@@ -35,7 +35,8 @@ with st.sidebar:
         model = st.text_input("Model", "qwen3:8b")
         url = st.text_input("Base URL", "http://localhost:11434/v1")
         llm = MeteredLLM(model=model, base_url=url, timeout=120)
-    st.caption(f"Guard backend: `{os.environ['MEMLEDGER_GUARD_BACKEND']}`")
+    st.caption("Checkers: code-only (lexical) in every demo scenario, whatever $MEMLEDGER_GUARD_BACKEND says; "
+               "the model-based results are in the Results tab.")
     st.markdown("The fake model believes everything it reads, so any difference comes from the memory layer.")
     offline = os.environ.get("HF_HUB_OFFLINE") == "1"
     st.caption("Offline mode: no network calls" if offline and llm is None else "Network may be used (real model)")
@@ -181,14 +182,15 @@ with tab_fam:
         worked = [r for r in st.session_state.fam_rows if r["MemLedger"] == "attack worked"]
         st.caption(f"{len(worked)} of {len(st.session_state.fam_rows)} families got through MemLedger in this sample. "
                    "Each family is shown with its first episode whose attack works on plain memory, to show what "
-                   "MemLedger stops: this is an illustration, not a rate. Rates over all episodes, with intervals, are "
-                   "in Results.")
+                   "MemLedger stops (chosen with the fake model, also when a real model is selected): this is an "
+                   "illustration, not a rate. Rates over all episodes, with intervals, are in Results.")
 
 with tab_results:
-    results = ROOT / "docs" / "results.md"
+    results = Path(os.environ.get("MEMLEDGER_RESULTS_MD", ROOT / "docs" / "results.md"))
     if results.exists():
         st.markdown(results.read_text())
     else:
-        st.warning("docs/results.md is missing. Generate it with:\n\n"
-                   "`python -m eval.runner --episodes data/scenarios/seed0.json --split dev` then "
-                   "`python -m eval.report results/<run_id>/summary.json`")
+        st.warning("docs/results.md is missing. Generate it (offline, no model needed) with:")
+        st.code("python -m scenarios.generator --seed 0 --out data/scenarios/seed0.json\n"
+                "python -m eval.runner --episodes data/scenarios/seed0.json --split dev --llm fake --guards lexical\n"
+                "python -m eval.report results/<run_id>/summary.json", language="bash")

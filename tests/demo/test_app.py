@@ -38,3 +38,11 @@ def test_isolation_and_attack_family_tabs():
     rows = at.dataframe[-1].value
     assert list(rows["family"]) == ["minja", "db_tamper"]
     assert set(rows["plain memory"]) == {"attack worked"} and set(rows["MemLedger"]) == {"defended"}
+
+
+def test_results_tab_explains_how_to_generate_missing_results(monkeypatch, tmp_path):
+    monkeypatch.setenv("MEMLEDGER_RESULTS_MD", str(tmp_path / "missing.md"))
+    at = st_testing.AppTest.from_file(APP, default_timeout=60).run()
+    assert not at.exception and any("missing" in w.value for w in at.warning)
+    cmds = " ".join(c.value for c in at.code)
+    assert "scenarios.generator" in cmds and "--llm fake --guards lexical" in cmds

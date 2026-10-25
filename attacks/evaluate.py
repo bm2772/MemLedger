@@ -91,7 +91,9 @@ def benchmark_block(episodes: list[Episode], rows: dict[str, list[dict]]) -> tup
             top_s = ", ".join(f"{k} {n}" for k, n in top.most_common(2)) or "–"
             calls = sum(r["llm"]["calls"] for r in mine)
             res.setdefault(src, {})[v] = {
-                "oracle_attack_success": Rate.of(sum(verdicts), len(verdicts)).__dict__, "llm_calls": calls,
+                "oracle_attack_success": Rate.of(sum(verdicts), len(verdicts)).__dict__,
+                "attack_success": Rate.of(sum(verdicts), len(verdicts)).__dict__,  # deprecated alias (F6)
+                "llm_calls": calls,
                 "harmless_write_rejected": m["false_rejection_rate"] if m else None,
                 "clean_input_quarantined": m["input_false_block_rate"] if m else None,
                 "clean_task_accuracy": m["task_accuracy"] if m else None, "blocked_by": dict(top)}
