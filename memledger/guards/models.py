@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import warnings
 from collections.abc import Callable
 
 PairScorer = Callable[[str, str], float]  # (document, claim) -> P(document supports claim)
@@ -22,14 +23,15 @@ TextClassifier = Callable[[str], float]  # text -> P(positive class: injected / 
 
 MINICHECK = "lytang/MiniCheck-RoBERTa-Large"
 NLI = "cross-encoder/nli-deberta-v3-base"
-PROMPT_GUARD = "meta-llama/Llama-Prompt-Guard-2-86M"  # alternative: protectai/deberta-v3-base-prompt-injection-v2
+PROMPT_GUARD = "meta-llama/Llama-Prompt-Guard-2-86M"
+PROTECTAI = "protectai/deberta-v3-base-prompt-injection-v2"  # ungated fallback when Prompt Guard 2 cannot load
 
 # Injection-classifier cut-offs tuned on BIPIA's TRAIN split only (guards/train/tune_screen.py, 24 Oct 2026:
 # 400 texts; highest recall with <= 5% false alarms on clean contexts). Below its cut-off a classifier score does
 # not count. ProtectAI flags 56% of clean BIPIA emails at 0.8, so it only counts when near-certain.
 # Prompt Guard 2 is not tuned yet (gated model): run the sweep before relying on it.
 TUNED_CUTOFFS: dict[str, float] = {
-    "protectai/deberta-v3-base-prompt-injection-v2": 0.99998,
+    PROTECTAI: 0.99998,
 }
 
 
@@ -53,6 +55,16 @@ def _pick(id2label: dict[int, str], names: tuple[str, ...], default: int) -> int
     return default
 
 
+def _float32() -> dict:
+    """Load weights in float32 (F10): transformers 5 keeps the stored dtype, so deberta-v3 came up in fp16, which is
+    ~20x slower on CPU and turns NaN when trained. transformers < 4.56 calls the argument torch_dtype."""
+    import torch
+    import transformers
+
+    major, minor = (int(x) for x in transformers.__version__.split(".")[:2])
+    return {"dtype" if (major, minor) >= (4, 56) else "torch_dtype": torch.float32}
+
+
 class _HF:
     """Lazy sequence-classification model; loads on first call."""
 
@@ -67,7 +79,8 @@ class _HF:
             from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
             self._tok = AutoTokenizer.from_pretrained(self.model_id)
-            self._model = AutoModelForSequenceClassification.from_pretrained(self.model_id).to(self.device).eval()
+            self._model = AutoModelForSequenceClassification.from_pretrained(
+                self.model_id, **_float32()).to(self.device).eval()
 
     @property
     def id2label(self) -> dict[int, str]:
@@ -118,9 +131,24 @@ class HFTextClassifier(_HF):
     POSITIVE = ("injection", "malicious", "jailbreak", "poison", "unsafe", "label_1")
 
     def __init__(self, model_id: str, max_length: int = 512, device: str | None = None,
-                 cutoff: float | None = None) -> None:
+                 cutoff: float | None = None, fallback: str | None = None) -> None:
         super().__init__(model_id, max_length, device)
+        self._explicit_cutoff = cutoff
         self.cutoff = TUNED_CUTOFFS.get(model_id, 0.0) if cutoff is None else cutoff
+        self.fallback = fallback  # model to use if this one cannot be loaded (gated, offline)
+
+    def _load(self) -> None:
+        try:
+            super()._load()
+        except (OSError, ValueError) as e:  # gated repo / no token / not cached
+            if not self.fallback or self.fallback == self.model_id:
+                raise
+            warnings.warn(f"{self.model_id} could not be loaded ({type(e).__name__}); using {self.fallback}",
+                          stacklevel=2)
+            self.model_id, self.fallback, self._tok, self._model = self.fallback, None, None, None
+            if self._explicit_cutoff is None:
+                self.cutoff = TUNED_CUTOFFS.get(self.model_id, 0.0)
+            super()._load()
 
     def __call__(self, text: str) -> float:
         idx = _pick(self.id2label, self.POSITIVE, 1)
@@ -142,7 +170,11 @@ def default_nli() -> NLIModel:
 
 
 def default_injection_classifier() -> TextClassifier | None:
-    """None in lexical mode: the screen then runs unhide + rules only (layers 1, 2)."""
+    """None in lexical mode: the screen then runs unhide + rules only (layers 1, 2).
+    Default Prompt Guard 2; it is gated, so without access it falls back to ProtectAI (F11) with a warning
+    instead of failing every episode. An explicit $MEMLEDGER_PROMPT_GUARD_MODEL gets no fallback."""
     if backend() == "lexical":
         return None
-    return HFTextClassifier(os.environ.get("MEMLEDGER_PROMPT_GUARD_MODEL", PROMPT_GUARD))
+    if model := os.environ.get("MEMLEDGER_PROMPT_GUARD_MODEL"):
+        return HFTextClassifier(model)
+    return HFTextClassifier(PROMPT_GUARD, fallback=PROTECTAI)

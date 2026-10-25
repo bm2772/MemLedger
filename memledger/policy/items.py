@@ -10,7 +10,9 @@ from dataclasses import dataclass
 
 from memledger.core.types import Claim, Integrity, Labels, Source, SourceKind, Status
 
-UNTRUSTED_KINDS = frozenset({SourceKind.WEB, SourceKind.MODEL_PARAMETRIC})
+# Tool output counts as untrusted input (I4): an InjecAgent-style tool response can carry an attacker's instruction
+# and parameter values, so it must never satisfy the action gate as a trusted context item (stress test, 25 Oct).
+UNTRUSTED_KINDS = frozenset({SourceKind.WEB, SourceKind.TOOL, SourceKind.MODEL_PARAMETRIC})
 BAD_STATUS = frozenset({Status.QUARANTINED, Status.CONTESTED, Status.SUPERSEDED})
 
 
@@ -36,7 +38,7 @@ Resolver = Callable[[str], Item | None]
 
 
 def integrity_of(item: Item, untrusted_below: float = 0.4) -> Integrity:
-    """Untrusted: web/model-parametric or flagged sources, quarantined/contested/superseded or low-trust claims,
+    """Untrusted: web/tool/model-parametric or flagged sources, quarantined/contested/superseded or low-trust claims,
     and anything labelled untrusted (e.g. mid-band screen). Trusted: registry sources or a TRUSTED label."""
     if item.labels.integrity == Integrity.UNTRUSTED or item.flagged:
         return Integrity.UNTRUSTED

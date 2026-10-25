@@ -86,3 +86,12 @@ def test_lexical_support_rules():
     assert lexical_support("Acme account 1234", "Acme account 9876") == 0.0
     assert lexical_support("The server is up.", "The server is not up.") == 0.0
     assert 0 < lexical_support("Acme Ltd bank account is 9876", "Acme Ltd invoice bank account is 9876") < 1
+
+
+def test_identical_code_snippet_passes_without_the_model():
+    """Stress test: MiniCheck rejected a code snippet copied verbatim from its source."""
+    code = "def area(r):\n    return 3.14159 * r ** 2;  # circle"
+    never = HallucinationCheck(scorer=lambda d, c: 0.0)
+    v = never.check(prop(code), [src("Helper from utils.py:\n\n" + code + "\n\nEnd of file.")])
+    assert v.ok and v.score == 1.0
+    assert never.check(prop("def area(r): return 3 * r"), [src(code)]).ok is False
