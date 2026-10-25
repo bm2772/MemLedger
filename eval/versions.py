@@ -60,7 +60,11 @@ def load_guard_models(backend: str | None = None) -> dict[str, Any]:
         return {}
     from memledger.guards.models import default_injection_classifier, default_nli, default_support_scorer
 
-    return {"scorer": default_support_scorer(), "nli": default_nli(), "injection": default_injection_classifier()}
+    models = {"scorer": default_support_scorer(), "nli": default_nli(), "injection": default_injection_classifier()}
+    if os.environ.get("MEMLEDGER_MEMSHIELD_MODEL"):  # otherwise the factory's lexical memshield rules
+        from memledger.guards.memshield import default_memshield
+        models["memshield"] = default_memshield()
+    return models
 
 
 @dataclass
@@ -81,7 +85,9 @@ def build(version: str | Version, episode_registry: dict, models: dict[str, Any]
                 "input_screen": svc.input_screen is not None, "action_gate": svc.gate is not None,
                 "access_control": svc.access is not None, "registry": reg is not None,
                 "hash_verify": svc.verify_hashes, "team_scoped": svc.scoped, "jtms": svc.jtms,
-                "guard_backend": backend or guard_backend(), "missing": []}
+                "guard_backend": backend or guard_backend(),
+                "memshield": "memshield" in (models or {}) and os.environ.get("MEMLEDGER_MEMSHIELD_MODEL") or "lexical",
+                "missing": []}
     return Built(svc, reg, manifest)
 
 

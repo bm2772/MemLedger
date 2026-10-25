@@ -1,1 +1,2 @@
 date,member,instance,gpu,hours,usd,purpose,prompt_tokens,completion_tokens
+2026-10-25,M3,mac-m4-local,Apple M4 16GB (MPS),0.16,0,memshield fine-tune deberta-v3-base 3 epochs (plus ~1.8 h of failed fp16/swapping attempts),0,0
