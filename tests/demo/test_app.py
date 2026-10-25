@@ -24,3 +24,17 @@ def test_app_renders_and_runs_every_tab():
     tamper = next(b for b in at.button if b.label.startswith("Tamper"))
     tamper.click().run()
     assert not at.exception and any(s.value.startswith("Detected") for s in at.success)
+
+
+def test_isolation_and_attack_family_tabs():
+    at = st_testing.AppTest.from_file(APP, default_timeout=120).run()
+    next(b for b in at.button if b.label == "Ask on both systems").click().run()
+    assert not at.exception
+    assert any(e.value.startswith("**Leaked**") for e in at.error)
+    assert any(s.value.startswith("**Withheld.**") for s in at.success)
+    at.multiselect[0].set_value(["minja", "db_tamper"]).run()
+    next(b for b in at.button if b.label == "Run selected families").click().run()
+    assert not at.exception
+    rows = at.dataframe[-1].value
+    assert list(rows["family"]) == ["minja", "db_tamper"]
+    assert set(rows["plain memory"]) == {"attack worked"} and set(rows["MemLedger"]) == {"defended"}

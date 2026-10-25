@@ -48,3 +48,25 @@ def test_lineage_dot_marks_flagged_and_quarantined():
 def test_tamper_is_detected(edit):
     r = s.tamper_demo(edit)
     assert r["before"] and r["after"] == [] and r["detected"] and "integrity: hash mismatch" in r["history"]
+
+
+def test_isolation_leaks_on_plain_memory_and_is_withheld_by_memledger():
+    plain, ml = s.play_isolation("baseline"), s.play_isolation("full")
+    assert plain["leaked"] and plain["retrieved"] >= 1 and s.CANARY in plain["answer"]
+    assert not ml["leaked"] and s.CANARY not in ml["answer"] and ml["error"] is None
+
+
+def test_one_episode_per_family_and_memledger_stops_them():
+    fams = s.family_samples(path="/nonexistent")  # offline: generated in memory
+    assert {"agentpoison", "db_tamper", "fake_fact", "isolation", "minja", "repetition_flooding"} <= set(fams)
+    for name in ("minja", "db_tamper", "fake_fact"):
+        base, full = s.play_family(fams[name], "baseline"), s.play_family(fams[name], "full")
+        assert base["succeeded"] is True and full["succeeded"] is False, name
+        assert full["blocked_by"] and full["error"] is None, name
+
+
+def test_family_samples_prefer_episodes_that_work_on_plain_memory():
+    fams = s.family_samples(path="/nonexistent")
+    assert s.play_family(fams["repetition_flooding"], "baseline")["succeeded"] is True
+    first = s.family_samples(path="/nonexistent", working_on_plain=False)
+    assert first["minja"].id == fams["minja"].id  # unchanged where the first one already works
