@@ -235,7 +235,11 @@ def _resumed(path: Path, episodes: list[Episode]) -> list[dict] | None:
     LLM server was down, is played again together with its version)."""
     if not path.exists():
         return None
-    rows = [json.loads(x) for x in path.read_text().splitlines() if x.strip()]
+    try:
+        rows = [json.loads(x) for x in path.read_text().splitlines() if x.strip()]
+    except json.JSONDecodeError:  # a file cut off mid-write (rows are now written atomically; older runs were not)
+        print(f"[{path.stem}] not resumed: {path} is not readable", flush=True)
+        return None
     if [r["episode"] for r in rows] != [e.id for e in episodes]:
         return None
     if errors := sum(bool(r.get("error")) for r in rows):
@@ -307,7 +311,12 @@ def run(episodes: list[Episode], versions: list[str], out_dir: str | Path | None
             diff = ", ".join(sorted(k for k in fingerprint if old.get(k) != fingerprint[k]))
             raise SystemExit(f"--resume: the rows in {raw_dir} come from another configuration ({diff}); "
                              "use a new --run-id")
-        resume = resume and fp_file.exists()  # rows without a fingerprint (an older run) are played again
+        same = fp_file.exists() and json.loads(fp_file.read_text()) == fingerprint
+        if not same and (stale := sorted(raw_dir.glob("*.jsonl"))):  # rows of another (or unrecorded) configuration
+            print(f"removing {len(stale)} raw files of another configuration from {raw_dir}", flush=True)
+            for f in stale:  # a later --resume must never pick them up under this run's run.json
+                f.unlink()
+        resume = resume and same  # rows without a fingerprint (an older run) are played again
         raw_dir.mkdir(parents=True, exist_ok=True)
         fp_file.write_text(json.dumps(fingerprint, indent=1) + "\n")
     all_rows: dict[str, list[dict]] = {}
@@ -328,8 +337,10 @@ def run(episodes: list[Episode], versions: list[str], out_dir: str | Path | None
         if out_dir is not None:
             raw = Path(out_dir) / "raw" / run_id
             raw.mkdir(parents=True, exist_ok=True)
-            with (raw / f"{v.name}.jsonl").open("w") as f:
+            tmp = raw / f"{v.name}.jsonl.tmp"  # write then rename: a crash never leaves a half-written version
+            with tmp.open("w") as f:
                 f.writelines(json.dumps(r, default=str) + "\n" for r in rows)
+            os.replace(tmp, raw / f"{v.name}.jsonl")
     if "baseline" in all_rows:
         for name, rows in all_rows.items():
             summary["metrics"][name]["accuracy_loss"] = accuracy_loss(all_rows["baseline"], rows)

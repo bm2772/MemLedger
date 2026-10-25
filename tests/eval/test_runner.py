@@ -272,3 +272,31 @@ def test_families_md_says_latency_is_not_meaningful_with_workers(tmp_path):
     assert "NOT meaningful" in (tmp_path / "par" / "families.md").read_text()
     assert "NOT meaningful" not in (tmp_path / "seq" / "families.md").read_text()
     assert json.loads((tmp_path / "par" / "families.json").read_text())["latency_valid"] is False
+
+
+def test_a_new_configuration_without_resume_removes_the_old_rows(tmp_path, capsys):
+    """Ahan's #19 re-review: model X runs baseline+full, model Y runs baseline only (no --resume); a later --resume
+    by Y must not keep X's `full`."""
+    episodes = list(eps().values())
+    run(episodes, ["baseline", "full"], tmp_path, "r", GullibleLLM(), backend="lexical")
+    y = GullibleLLM()
+    y.model = "model-y"
+    run(episodes, ["baseline"], tmp_path, "r", y, backend="lexical")
+    assert "removing 2 raw files of another configuration" in capsys.readouterr().out
+    assert not (tmp_path / "raw" / "r" / "full.jsonl").exists()
+    y2 = GullibleLLM()
+    y2.model = "model-y"
+    out = run(episodes, ["baseline", "full"], tmp_path, "r", y2, backend="lexical", resume=True)
+    assert out["metrics"]["full"]["llm"]["calls"] > 0  # full played by model Y, not kept from X
+    assert y2.meter.calls == out["metrics"]["full"]["llm"]["calls"]  # baseline was resumed
+
+
+def test_a_cut_off_raw_file_is_played_again_and_rows_are_written_atomically(tmp_path, capsys):
+    episodes = list(eps().values())
+    run(episodes, ["baseline"], tmp_path, "r", GullibleLLM(), backend="lexical")
+    raw = tmp_path / "raw" / "r" / "baseline.jsonl"
+    assert not list(raw.parent.glob("*.tmp"))
+    raw.write_text(raw.read_text()[:-40])  # crash mid-write in an older run
+    llm = GullibleLLM()
+    run(episodes, ["baseline"], tmp_path, "r", llm, backend="lexical", resume=True)
+    assert "is not readable" in capsys.readouterr().out and llm.meter.calls > 0
