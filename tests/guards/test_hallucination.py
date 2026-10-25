@@ -95,3 +95,10 @@ def test_identical_code_snippet_passes_without_the_model():
     v = never.check(prop(code), [src("Helper from utils.py:\n\n" + code + "\n\nEnd of file.")])
     assert v.ok and v.score == 1.0
     assert never.check(prop("def area(r): return 3 * r"), [src(code)]).ok is False
+
+
+def test_verbatim_shortcut_respects_token_boundaries():
+    never = HallucinationCheck(scorer=lambda d, c: 0.0)
+    assert never.check(prop("Acme account 98"), [src("Acme account 9876 is used")]).ok is False
+    assert never.check(prop("pay 1,000"), [src("Please pay 1,000,000 today")]).ok is False
+    assert never.check(prop("pay 1,000"), [src("Please pay 1,000 today.")]).ok is True

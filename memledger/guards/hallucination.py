@@ -3,15 +3,23 @@
 The proposal is split into single facts; each is scored by a grounding model (MiniCheck or AlignScore; injectable)
 against the text of the sources the model was shown, all sources together so multi-source conclusions can pass.
 Long source text is checked in overlapping chunks and the best chunk counts. Flagged sources support nothing.
-A fact that appears verbatim in the sources (whitespace-normalised, e.g. a copied code snippet) scores 1.0 without
-the model: MiniCheck rejected an identical code snippet in the stress test. Verdict.score = the weakest fact's support, which the service uses as s in T = s * min parent trust (slide 7).
+A fact that appears verbatim in the sources on token boundaries (whitespace-normalised, e.g. a copied code snippet;
+"98" never matches inside "9876", nor "1,000" inside "1,000,000") scores 1.0 without the model: MiniCheck rejected an
+identical code snippet in the stress test. Verdict.score = the weakest fact's support, which the service uses as s in
+T = s * min parent trust (slide 7).
 """
 
 from __future__ import annotations
 
+import re
+
 from memledger.core.types import Source, Verdict, WriteProposal
 from memledger.guards.models import PairScorer, default_support_scorer
 from memledger.guards.text import chunks, normalise, split_facts
+
+
+def _verbatim(needle: str, haystack: str) -> bool:
+    return bool(needle) and re.search(r"(?<![\w.,])" + re.escape(needle) + r"(?![\w]|[.,]\d)", haystack) is not None
 
 
 def _squash(text: str) -> str:
@@ -42,9 +50,9 @@ class HallucinationCheck:
             return Verdict(False, 0.0, "no unflagged sources to support it", self.name)
         docs = chunks("\n\n".join(s.content for s in usable), self.chunk_words, self.chunk_words // 4)
         full = _squash("\n".join(s.content for s in usable))
-        if _squash(proposal.text) in full:
+        if _verbatim(_squash(proposal.text), full):
             return Verdict(True, 1.0, "copied verbatim from its sources", self.name)
-        scored = [(f, 1.0 if _squash(f) and _squash(f) in full else self.score_fact(f, docs)) for f in facts]
+        scored = [(f, 1.0 if _verbatim(_squash(f), full) else self.score_fact(f, docs)) for f in facts]
         worst = min(s for _, s in scored)
         failing = [(f, s) for f, s in scored if s < self.threshold]
         if failing:
