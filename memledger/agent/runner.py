@@ -31,6 +31,7 @@ class EpisodeResult:
     runs: dict[str, AgentRun] = field(default_factory=dict)  # task step id -> agent run
     outbox: list[dict] = field(default_factory=list)  # high-risk actions that actually executed
     tool_ingests: list[Source] = field(default_factory=list)  # sources the agent's tool calls created (web, data stubs)
+    tool_ingest_sessions: dict[str, Session] = field(default_factory=dict)  # source id -> session that fetched it
 
     @property
     def seed_sources(self) -> dict[str, str]:
@@ -123,4 +124,5 @@ def run_episode(episode: Episode, memory: MemoryService, llm: LLM, registry_look
         play.step(i, s)
     result.outbox = tools.outbox
     result.tool_ingests = tools.ingested
+    result.tool_ingest_sessions = tools.ingested_by
     return result
