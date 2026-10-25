@@ -6,7 +6,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from memledger.core.merkle import merkle_proof, merkle_root, verify_proof
 from memledger.core.mock import PRIORS
 from memledger.core.service import LedgerService, item_hash, leaf_of
-from memledger.core.types import Session, SourceKind, Verdict, WriteProposal
+from memledger.core.types import Session, SourceKind, Status, Verdict, WriteProposal
 
 ALICE = Session("alice", "a", "researcher", 1)
 BOB = Session("bob", "b", "researcher", 1)
@@ -129,7 +129,7 @@ def test_flag_source_quarantines_dependents(svc):
     dep = write(svc, "dependent fact", [s1.id])
     other = write(svc, "other fact", [s2.id])
     out = svc.flag_source(s1.id, "poisoned")
-    assert out == {"quarantined": [dep], "restored": []}
+    assert out == {"quarantined": [dep], "restored": [], "contested": []}
     assert svc.store.get_claim(dep).status.value == "quarantined"
     assert svc.store.get_source(s1.id).flagged
     assert svc.retrieve("dependent", ALICE) == []
@@ -191,3 +191,272 @@ def test_restored_claim_is_reanchored_and_retrievable(svc):
     assert res["restored"] == [cid]
     assert [m.claim.id for m in svc.retrieve("shared fact", ALICE)] == [cid]
     assert svc.store.get_claim(cid).status.value == "restored"
+
+
+# ---- supported_by = the parents of the facts (attribution by the hallucination check), not the whole context
+def attributing_service():
+    from memledger.guards.hallucination import HallucinationCheck
+
+    def words_in(doc, fact):
+        return float(set(fact.lower().strip(".").split()) <= set(doc.lower().replace(".", " ").split()))
+
+    return LedgerService(checks=[HallucinationCheck(scorer=words_in)])
+
+
+def test_supported_by_holds_only_the_sources_of_the_facts():
+    svc = attributing_service()
+    acct = svc.ingest("Acme account is 1234.", SourceKind.INTERNAL, ALICE)
+    menu = svc.ingest("Lunch menu: rice and dal.", SourceKind.WEB, ALICE)
+    cid = write(svc, "Acme account is 1234.", [acct.id, menu.id])
+    (d,) = svc.store.derivations_for(cid)
+    assert d.exposed_to == [acct.id, menu.id] and list(d.supported_by) == [acct.id]
+    assert [(f.fact, f.parents, f.joint) for f in d.facts] == [("Acme account is 1234.", {acct.id: 1.0}, False)]
+    assert svc.explain(cid)["lineage"][0]["facts"] == [
+        {"fact": "Acme account is 1234.", "parents": {acct.id: 1.0}, "joint": False}]
+
+
+def contested_by_exposure(svc, cid):
+    c = svc.store.get_claim(cid)
+    return c.status == Status.CONTESTED and svc.store.status_history(cid)[-1]["reason"].startswith("exposure: ")
+
+
+def test_exposed_only_memory_is_contested_with_trust_unchanged():
+    svc = attributing_service()
+    acct = svc.ingest("Acme account is 1234.", SourceKind.INTERNAL, ALICE)
+    menu = svc.ingest("Lunch menu: rice and dal.", SourceKind.WEB, ALICE)
+    cid = write(svc, "Acme account is 1234.", [acct.id, menu.id])
+    before = svc.store.get_claim(cid).trust
+    assert svc.flag_source(menu.id, "poisoned") == {"quarantined": [], "restored": [], "contested": [cid]}
+    assert contested_by_exposure(svc, cid) and svc.store.get_claim(cid).trust == before
+    assert svc.store.status_history(cid)[-1]["reason"] == f"exposure: flagged source {menu.id}"
+
+
+def test_source_in_supported_by_still_quarantines():
+    svc = attributing_service()
+    acct = svc.ingest("Acme account is 1234.", SourceKind.INTERNAL, ALICE)
+    menu = svc.ingest("Lunch menu: rice and dal.", SourceKind.WEB, ALICE)
+    cid = write(svc, "Acme account is 1234.", [acct.id, menu.id])
+    assert svc.flag_source(acct.id, "poisoned") == {"quarantined": [cid], "restored": [], "contested": []}
+    assert svc.store.get_claim(cid).status == Status.QUARANTINED
+
+
+def test_unflagging_restores_contested_and_quarantined_memories():
+    svc = attributing_service()
+    acct = svc.ingest("Acme account is 1234.", SourceKind.INTERNAL, ALICE)
+    menu = svc.ingest("Lunch menu: rice and dal.", SourceKind.WEB, ALICE)
+    cid = write(svc, "Acme account is 1234.", [acct.id, menu.id])
+    svc.flag_source(menu.id, "poisoned")
+    assert svc.unflag_source(menu.id, "false alarm") == {"quarantined": [], "restored": [cid], "contested": []}
+    assert svc.store.get_claim(cid).status == Status.RESTORED
+    svc.flag_source(acct.id, "poisoned")
+    assert svc.unflag_source(acct.id, "false alarm")["restored"] == [cid]
+
+
+def test_contradiction_contested_memory_is_not_restored_by_unflagging():
+    svc = attributing_service()
+    acct = svc.ingest("Acme account is 1234.", SourceKind.INTERNAL, ALICE)
+    menu = svc.ingest("Lunch menu: rice and dal.", SourceKind.WEB, ALICE)
+    cid = write(svc, "Acme account is 1234.", [acct.id, menu.id])
+    svc.store.set_status(cid, Status.CONTESTED.value, "contradicted by higher-trust c_x")
+    assert svc.flag_source(menu.id, "poisoned")["contested"] == []  # already contested, reason kept
+    assert svc.unflag_source(menu.id, "false alarm")["restored"] == []
+    assert svc.store.get_claim(cid).status == Status.CONTESTED
+
+
+def test_memory_written_next_to_an_already_flagged_source_is_contested_at_birth():
+    svc = attributing_service()
+    acct = svc.ingest("Acme account is 1234.", SourceKind.INTERNAL, ALICE)
+    menu = svc.ingest("Lunch menu: rice and dal.", SourceKind.WEB, ALICE)
+    svc.flag_source(menu.id, "screened")
+    cid = write(svc, "Acme account is 1234.", [acct.id, menu.id])
+    assert contested_by_exposure(svc, cid)
+
+
+def test_contest_spreads_down_the_chain_only_when_it_is_the_only_support():
+    svc = attributing_service()
+    pune = svc.ingest("Acme is based in Pune.", SourceKind.INTERNAL, ALICE)
+    pune2 = svc.ingest("Acme is based in Pune and Mumbai.", SourceKind.INTERNAL, ALICE)
+    menu = svc.ingest("Lunch menu: rice and dal.", SourceKind.WEB, ALICE)
+    parent = write(svc, "Acme is based in Pune.", [pune.id, menu.id])
+    only_via_parent = write(svc, "Acme is based in Pune", [parent])  # grounded on the memory alone
+    also_clean = write(svc, "Acme is in Pune", [parent])
+    write(svc, "Acme is in Pune", [pune2.id])  # a second, clean justification
+    out = svc.flag_source(menu.id, "poisoned")
+    assert out["contested"] == [parent, only_via_parent] and out["quarantined"] == []
+    assert contested_by_exposure(svc, only_via_parent)
+    assert svc.store.get_claim(also_clean).status == Status.ACTIVE
+    assert svc.store.status_history(only_via_parent)[-1]["reason"] == f"exposure: rests on contested memory {parent}"
+    assert set(svc.unflag_source(menu.id, "false alarm")["restored"]) == {parent, only_via_parent}
+
+
+def test_gate_does_not_count_a_contested_memory_as_trusted_context():
+    from memledger.core.factory import build_service
+
+    svc = build_service("full_no_registry")
+    reg = svc.ingest("Vendor master: Acme account is 1234.", SourceKind.REGISTRY, ALICE)
+    menu = svc.ingest("Lunch menu: rice and dal.", SourceKind.INTERNAL, ALICE)
+    cid = write(svc, "Acme account is 1234.", [reg.id, menu.id])
+    pay = {"vendor": "Acme", "account": "1234", "amount": 10}
+    assert svc.authorize("pay_invoice", pay, [cid], ALICE).ok
+    svc.flag_source(menu.id, "poisoned")
+    assert svc.store.get_claim(cid).status == Status.CONTESTED
+    v = svc.authorize("pay_invoice", pay, [cid], ALICE)
+    assert not v.ok and "contested" in v.reason
+
+
+def test_memory_parents_are_attributed_and_retraction_follows_only_them():
+    svc = attributing_service()
+    pune = svc.ingest("Acme is based in Pune.", SourceKind.INTERNAL, ALICE)
+    acct = svc.ingest("Acme account is 1234.", SourceKind.INTERNAL, ALICE)
+    m_pune, m_acct = write(svc, "Acme is based in Pune.", [pune.id]), write(svc, "Acme account is 1234.", [acct.id])
+    new = write(svc, "Acme is based in Pune", [pune.id, m_pune, m_acct])  # retrieved memories in the context
+    (d,) = svc.store.derivations_for(new)
+    assert list(d.supported_by) == [pune.id, m_pune]  # not the unrelated memory m_acct
+    assert svc.flag_source(acct.id, "poisoned")["quarantined"] == [m_acct]
+    assert svc.store.get_claim(new).status == Status.ACTIVE
+    assert set(svc.flag_source(pune.id, "poisoned")["quarantined"]) == {m_pune, new}
+
+
+def test_without_a_verifier_every_context_item_is_a_parent(svc):
+    s1, s2 = svc.ingest("one", SourceKind.USER, ALICE), svc.ingest("two", SourceKind.WEB, ALICE)
+    (d,) = svc.store.derivations_for(write(svc, "claim", [s1.id, s2.id]))
+    assert list(d.supported_by) == [s1.id, s2.id] and d.facts == []
+
+
+def test_memory_grounded_only_on_a_memory_is_accepted_and_retracted_with_it():
+    svc = attributing_service()
+    pune = svc.ingest("Acme is based in Pune.", SourceKind.INTERNAL, ALICE)
+    parent = write(svc, "Acme is based in Pune.", [pune.id])
+    child = write(svc, "Acme is based in Pune", [parent])  # no source in the context: grounded on the memory
+    assert list(svc.store.derivations_for(child)[0].supported_by) == [parent]
+    assert set(svc.flag_source(pune.id, "poisoned")["quarantined"]) == {parent, child}
+    res = svc.propose_write(WriteProposal("Acme is in Pune", [parent], ALICE, "ag"))  # quarantined: grounds nothing
+    assert not res.accepted
+
+
+def test_checks_without_a_claims_parameter_still_work():
+    chk = FakeCheck(ok=True, score=0.9)
+    svc = LedgerService(checks=[chk])
+    s1 = svc.ingest("one", SourceKind.USER, ALICE)
+    c1 = write(svc, "claim", [s1.id])
+    write(svc, "claim two", [s1.id, c1])
+    assert [x.id for x in chk.seen[-1]] == [s1.id]  # sources only, as before
+
+
+# ---- alternative supporters are OR (slide 6 D1; review of #17): one derivation per independent supporter
+def test_d1_paper_and_web_copy_each_support_the_fact_flagging_the_copy_keeps_it():
+    from memledger.core.factory import build_service
+
+    svc = build_service("full_no_registry")
+    paper = svc.ingest("Drug X lowers blood pressure in adults.", SourceKind.PAPER, ALICE)
+    web = svc.ingest("Drug X lowers blood pressure in adults!", SourceKind.WEB, ALICE)
+    cid = write(svc, "Drug X lowers blood pressure in adults", [paper.id, web.id])
+    ders = svc.store.derivations_for(cid)
+    assert sorted(list(d.supported_by) for d in ders) == sorted([[paper.id], [web.id]])
+    t = {next(iter(d.supported_by)): svc.trust.derivation_trust(d) for d in ders}
+    # independent origins: noisy-OR (was one AND-derivation: min parent trust 0.3 x s = 0.15)
+    assert svc.store.get_claim(cid).trust == pytest.approx(1 - (1 - t[paper.id]) * (1 - t[web.id]))
+    assert svc.store.get_claim(cid).trust > 0.5
+    out = svc.flag_source(web.id, "planted copy")
+    assert out == {"quarantined": [], "restored": [], "contested": []}  # supported by the paper alone: kept
+    assert svc.store.get_claim(cid).status == Status.ACTIVE
+    assert svc.store.get_claim(cid).trust == pytest.approx(t[paper.id])
+    assert svc.flag_source(paper.id, "retracted")["quarantined"] == [cid]
+
+
+def test_copies_of_one_page_count_as_one_supporter():
+    svc = attributing_service()
+    copies = [svc.ingest("Acme account is 1234.", SourceKind.WEB, ALICE) for _ in range(5)]
+    cid = write(svc, "Acme account is 1234.", [c.id for c in copies])
+    (d,) = svc.store.derivations_for(cid)
+    assert set(d.supported_by) == {c.id for c in copies}
+    one = attributing_service()
+    s1 = one.ingest("Acme account is 1234.", SourceKind.WEB, ALICE)
+    assert svc.store.get_claim(cid).trust == pytest.approx(one.store.get_claim(write(one, "Acme account is 1234.",
+                                                                                     [s1.id])).trust)
+
+
+def test_two_facts_with_alternative_supporters_hold_while_each_fact_keeps_one():
+    svc = attributing_service()
+    a1 = svc.ingest("Acme account is 1234.", SourceKind.INTERNAL, ALICE)
+    a2 = svc.ingest("Note: Acme account is 1234 per finance.", SourceKind.USER, ALICE)
+    b1 = svc.ingest("Acme is based in Pune.", SourceKind.INTERNAL, ALICE)
+    cid = write(svc, "Acme account is 1234. Acme is based in Pune.", [a1.id, a2.id, b1.id])
+    ders = svc.store.derivations_for(cid)
+    assert sorted(sorted(d.supported_by) for d in ders) == sorted([sorted([a1.id, b1.id]), sorted([a2.id, b1.id])])
+    assert len(ders[0].facts) == 2 and all(d.facts == [] for d in ders[1:])  # per-fact support stored once
+    assert svc.flag_source(a1.id, "x")["quarantined"] == []  # fact 1 still has a2
+    assert svc.flag_source(b1.id, "x")["quarantined"] == [cid]  # fact 2 had only b1
+
+
+def test_joint_fact_still_needs_all_its_sources():
+    svc = attributing_service()
+    a = svc.ingest("Acme account 1234.", SourceKind.INTERNAL, ALICE)
+    b = svc.ingest("Pune office.", SourceKind.INTERNAL, ALICE)
+    cid = write(svc, "Acme account 1234 Pune office", [a.id, b.id])
+    (d,) = svc.store.derivations_for(cid)
+    assert set(d.supported_by) == {a.id, b.id} and d.facts[0].joint
+    assert svc.flag_source(b.id, "x")["quarantined"] == [cid]
+
+
+# ---- support must be well-founded (review of #17): a memory cannot hold itself up through a loop
+def loop_service():
+    from memledger.core.factory import build_service
+
+    return build_service("full_no_registry")
+
+
+def test_memory_restated_from_itself_is_still_retracted_with_its_source():
+    svc = loop_service()
+    web = svc.ingest("Vendor Globex ships within 2 days.", SourceKind.WEB, ALICE)
+    m1 = write(svc, "Globex ships within 2 days", [web.id])
+    assert write(svc, "Globex ships within 2 days", [m1]) == m1  # recall-then-remember: m1 now cites itself
+    m2 = write(svc, "Globex delivers within 2 days", [m1])
+    assert set(svc.flag_source(web.id, "poisoned")["quarantined"]) == {m1, m2}
+
+
+def test_two_step_loop_is_still_retracted_with_its_source():
+    svc = loop_service()
+    web = svc.ingest("Vendor Globex ships within 2 days.", SourceKind.WEB, ALICE)
+    m1 = write(svc, "Globex ships within 2 days", [web.id])
+    m2 = write(svc, "Globex delivers within 2 days", [m1])
+    assert write(svc, "Globex ships within 2 days", [m2]) == m1  # m1 re-stated from m2: m1 -> m2 -> m1
+    assert set(svc.flag_source(web.id, "poisoned")["quarantined"]) == {m1, m2}
+
+
+def test_a_loop_does_not_hide_an_independent_source():
+    svc = loop_service()
+    web = svc.ingest("Vendor Globex ships within 2 days.", SourceKind.WEB, ALICE)
+    paper = svc.ingest("Audit: Globex ships within 2 days.", SourceKind.PAPER, ALICE)
+    m1 = write(svc, "Globex ships within 2 days", [web.id])
+    m2 = write(svc, "Globex delivers within 2 days", [m1])
+    write(svc, "Globex ships within 2 days", [m2])  # loop m1 -> m2 -> m1
+    write(svc, "Globex ships within 2 days", [paper.id])  # and a real second source for m1
+    assert svc.flag_source(web.id, "poisoned")["quarantined"] == []
+    assert svc.store.get_claim(m1).status == Status.ACTIVE and svc.store.get_claim(m2).status == Status.ACTIVE
+    assert set(svc.flag_source(paper.id, "retracted")["quarantined"]) == {m1, m2}
+
+
+def test_deep_memory_lattice_is_labelled_in_polynomial_time():
+    """Review of #17: the path-walking check doubled per level (depth 14: 13.9 s per write). Each level has two
+    memories, each supported on its own by either memory below it; flagging the base page must retract all of them,
+    fast, at depth 30."""
+    import time
+
+    depth = 30
+    svc = attributing_service()
+
+    def text(k, x):  # every memory's words are a subset of each memory one level down
+        return "g " + " ".join(f"a{j} b{j}" for j in range(k + 1, depth + 1)) + f" {x}{k}"
+
+    t0 = time.perf_counter()
+    page = svc.ingest("g " + " ".join(f"a{j} b{j}" for j in range(depth + 1)), SourceKind.WEB, ALICE)
+    level = [write(svc, text(0, x), [page.id]) for x in "ab"]
+    claims = list(level)
+    for k in range(1, depth + 1):
+        level = [write(svc, text(k, x), level) for x in "ab"]
+        claims += level
+    assert len(svc.store.derivations_for(level[0])) == 2  # either memory below supports it on its own
+    out = svc.flag_source(page.id, "poisoned")
+    assert set(out["quarantined"]) == set(claims) and len(claims) == 2 * (depth + 1)
+    assert time.perf_counter() - t0 < 10  # 0.3 s here; the path-walking version never finishes

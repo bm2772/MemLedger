@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from memledger.core.types import Claim, Derivation, Integrity, Labels, Source, SourceKind, Status
+from memledger.core.types import Claim, Derivation, FactSupport, Integrity, Labels, Source, SourceKind, Status
 from memledger.store import SQLiteStore
 from memledger.store.sqlite import TABLES
 
@@ -80,10 +80,10 @@ def test_invalid_edge_type(st):
 def test_append_only(st, table):
     st.add_source(mk_source())
     st.add_claim(mk_claim())
-    st.add_derivation(Derivation("d1", "c1", ["s1"], {}, created_at=T0))
+    st.add_derivation(Derivation("d1", "c1", ["s1"], {}, created_at=T0, facts=[FactSupport("f", {"s1": 0.9})]))
     st.append_hash_log("r", b"sig", 1, {"s1": "leaf"})
     st.add_triple("c1", "x", "p", "v")
-    col = {"sources": "kind", "claims": "text", "derivations": "model", "edges": "type",
+    col = {"sources": "kind", "claims": "text", "derivations": "model", "edges": "type", "fact_support": "fact",
            "status_log": "reason", "hash_log": "root", "anchored": "leaf", "triples": "value"}[table]
     with pytest.raises(sqlite3.DatabaseError, match="append-only"):
         st.conn.execute(f"UPDATE {table} SET {col}={col}")
@@ -129,3 +129,12 @@ def test_triples_lookup_case_insensitive(st):
     assert st.lookup_triples("project x", "Owner") == ["c2"]
     assert st.lookup_triples("project") == []
     assert st.triple_subjects() == ["project x"]
+
+
+def test_fact_support_round_trip(st):
+    st.add_source(mk_source())
+    st.add_claim(mk_claim())
+    facts = [FactSupport("f1", {"s1": 0.9, "c0": 0.7}), FactSupport("f2", {}), FactSupport("f3", {"s1": 0.4}, True)]
+    st.add_derivation(Derivation("d1", "c1", ["s1", "c0"], {"s1": 0.6, "c0": 0.6}, created_at=T0, facts=facts))
+    (d,) = st.derivations_for("c1")
+    assert d.facts == facts and st.get_derivation("d1").facts == facts

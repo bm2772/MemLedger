@@ -43,7 +43,7 @@ def test_slide7_worked_example():
     assert round(trust(svc, c1), 2) == 0.92
     assert svc.verify_claim(c1)  # merging keeps the hash tied to the first derivation
     out = svc.flag_source(paper.id, "retracted")
-    assert out == {"quarantined": [], "restored": []}
+    assert out == {"quarantined": [], "restored": [], "contested": []}
     assert trust(svc, c1) == pytest.approx(0.56)
     assert svc.store.get_claim(c1).status != Status.QUARANTINED
     out = svc.flag_source(user.id, "bad")

@@ -71,7 +71,7 @@ class MockMemoryService:
     def flag_source(self, source_id: str, reason: str) -> dict[str, list[str]]:
         if source_id in self.sources:
             self.sources[source_id].flagged = True
-        return {"quarantined": [], "restored": []}
+        return {"quarantined": [], "restored": [], "contested": []}
 
     def explain(self, claim_id: str) -> dict:
         return {"claim": claim_id, "lineage": []}

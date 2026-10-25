@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import threading
 import time
 import uuid
@@ -21,6 +22,7 @@ from memledger.core.trust import TrustEngine
 from memledger.core.types import (
     Claim,
     Derivation,
+    FactSupport,
     Labels,
     RetrievedMemory,
     Session,
@@ -56,6 +58,9 @@ def leaf_of(item_id: str, content_hash: str) -> str:
 
 class IntegrityError(RuntimeError):
     """The stored ledger no longer matches its signed root; the service refuses to sign over it."""
+
+
+MAX_JUSTIFICATIONS = 16  # derivations recorded per write (alternative supporters of several facts multiply)
 
 
 def _new_id(prefix: str) -> str:
@@ -170,31 +175,38 @@ class LedgerService:
             access.observe(proposal.session, [c.id for c in claims])  # an untrusted parent taints too (I3)
         elif self.scoped and any(c.labels.team not in (proposal.session.team, "shared") for c in claims):
             return proposal, [Verdict(False, 0.0, "parent memory from another team", "team_scope")]
-        return proposal, [c.check(proposal, sources) for c in self.checks]
+        return proposal, [self._run_check(c, proposal, sources, claims) for c in self.checks]
 
     def _propose_write(self, proposal: WriteProposal) -> WriteResult:
         proposal, verdicts = self._validate(proposal)
+        sources = [s for i in proposal.context_ids if (s := self.store.get_source(i)) is not None]
+        claims = [c for i in proposal.context_ids if (c := self.store.get_claim(i)) is not None]
         if any(not v.ok for v in verdicts):
             return WriteResult(False, [], verdicts)
         score = min((v.score for v in verdicts), default=1.0)
+        facts = self._attribute(proposal, sources, claims)
         team = proposal.session.team
         key = proposal.text.strip().lower()
         existing = next((c for c in self.store.list_claims(team=team)
                          if c.status != Status.QUARANTINED and c.text.strip().lower() == key), None)
         if existing is not None:  # same fact again: one more justification, not a new claim
-            self.store.add_derivation(self._derivation(existing.id, proposal, score))
+            for d in self._derivations(existing.id, proposal, score, facts):
+                self.store.add_derivation(d)
             self.trust.recompute([existing.id])
             self._anchor()
             return WriteResult(True, [existing.id], verdicts)
         claim = self._make_claim(proposal, score)
         self.store.add_claim(claim)
-        self.store.add_derivation(self._derivation(claim.id, proposal, score))
+        for d in self._derivations(claim.id, proposal, score, facts):
+            self.store.add_derivation(d)
         t = self.trust.claim_trust(claim.id)
         if t is None and self.jtms:  # its only justification is already invalid (flagged source / quarantined parent)
             self.store.set_status(claim.id, Status.QUARANTINED.value, "jtms: no valid justification", 0.0)
             self._anchor([(claim.id, claim.content_hash)])
             return WriteResult(False, [], [*verdicts, Verdict(False, 0.0, "no valid justification (JTMS)", "jtms")])
         self.store.set_status(claim.id, Status.ACTIVE.value, "jtms: initial trust", t or 0.0)
+        if self.jtms:  # written next to an already-flagged source, or resting on a contested memory: contested
+            self.trust.recompute([claim.id])
         self.index.add(claim.labels.team, claim.id, claim.text)
         for c in self.checks:  # step 4: conflicts the contradiction check found are recorded as edges
             for conflict in getattr(c, "last_conflicts", []):
@@ -202,9 +214,61 @@ class LedgerService:
         self._anchor([(claim.id, claim.content_hash)])
         return WriteResult(True, [claim.id], verdicts)
 
-    def _derivation(self, claim_id: str, p: WriteProposal, score: float) -> Derivation:
-        return Derivation(_new_id("d_"), claim_id, list(p.context_ids),
-                          {cid: score for cid in p.context_ids}, agent_id=p.agent_id)
+    @staticmethod
+    def _run_check(check: Check, p: WriteProposal, sources: list[Source], claims: list[Claim]) -> Verdict:
+        """Parent memories go only to checks that take them (`claims` parameter, e.g. the hallucination check)."""
+        if "claims" in inspect.signature(check.check).parameters:
+            return check.check(p, sources, claims=claims)
+        return check.check(p, sources)
+
+    def _attribute(self, p: WriteProposal, sources: list[Source], claims: list[Claim]) -> list[FactSupport] | None:
+        """Which context items support which fact, from the check that can tell (the hallucination check). None when
+        no check can (baseline, provenance): then every context item is a parent."""
+        attribute = next((a for c in self.checks if callable(a := getattr(c, "attribute", None))), None)
+        if attribute is None:
+            return None
+        return attribute(p, sources, claims)
+
+    def _derivations(self, claim_id: str, p: WriteProposal, score: float,
+                     facts: list[FactSupport] | None = None) -> list[Derivation]:
+        """One write -> one derivation per independent way its facts are supported (slides 6-7).
+
+        exposed_to = the whole context; supported_by = one choice of supporter per fact, each with the write's s.
+        Parents that each support a fact on their own are alternatives (OR): the memory holds while any of them is
+        valid, and the JTMS noisy-ORs their trust when their origins are independent. A joint fact needs all its
+        parents (AND). Copies of one text are one supporter, so ten copies of a page count once. Without a verifier
+        (facts is None) every context item is a parent of the single derivation. Per-fact support is stored on the
+        first derivation of the write.
+        """
+        ctx = list(p.context_ids)
+        if facts is None:
+            return [Derivation(_new_id("d_"), claim_id, ctx, {cid: score for cid in ctx}, agent_id=p.agent_id)]
+        combos: list[frozenset[str]] = [frozenset()]
+        for f in facts:
+            options = [frozenset(f.parents)] if f.joint or not f.parents else self._supporters(f)
+            combos = list(dict.fromkeys(c | o for c in combos for o in options))
+            if len(combos) > MAX_JUSTIFICATIONS:
+                combos = sorted(combos, key=self._combo_rank)[:MAX_JUSTIFICATIONS]
+        combos = [c for c in combos if not any(o < c for o in combos)]  # a superset adds no new way to hold
+        combos.sort(key=self._combo_rank)
+        order = {cid: i for i, cid in enumerate(ctx)}
+        return [Derivation(_new_id("d_"), claim_id, ctx, {cid: score for cid in sorted(c, key=order.get)},
+                           agent_id=p.agent_id, facts=list(facts) if i == 0 else [])
+                for i, c in enumerate(combos)]
+
+    def _supporters(self, f: FactSupport) -> list[frozenset[str]]:
+        """A fact's alternative supporters; parents with the same text (copies of one page) are one supporter."""
+        groups: dict[str, set[str]] = {}
+        for pid in f.parents:
+            x = self.store.get_source(pid) or self.store.get_claim(pid)
+            text = x.content if hasattr(x, "content") else getattr(x, "text", pid)
+            groups.setdefault(" ".join(text.lower().split()), set()).add(pid)
+        return [frozenset(g) for g in groups.values()]
+
+    def _combo_rank(self, combo: frozenset[str]) -> tuple:
+        """Strongest first: highest weakest-parent trust, then fewest parents, then ids (deterministic)."""
+        trusts = [t for pid in combo if (t := self.trust._parent_trust(pid)) is not None]
+        return (-min(trusts, default=0.0), len(combo), sorted(combo))
 
     def add_triple(self, claim_id: str, subject: str, property: str, value: str) -> None:
         self.store.add_triple(claim_id, subject, property, value)
@@ -348,12 +412,21 @@ class LedgerService:
             self._timed("gate", t0)
 
     def flag_source(self, source_id: str, reason: str) -> dict[str, list[str]]:
+        """Retract: claims resting on the source are quarantined (JTMS); claims that only saw it are contested."""
         self.store.flag_source(source_id, reason)
+        return self._recompute_all()
+
+    def unflag_source(self, source_id: str, reason: str) -> dict[str, list[str]]:
+        """Undo a flag (false alarm): the JTMS restores what it quarantined and exposure-contested claims are restored."""
+        self.store.unflag_source(source_id, reason)
+        return self._recompute_all()
+
+    def _recompute_all(self) -> dict[str, list[str]]:
         if not self.jtms:  # plain memory has no dependency graph to retract through
-            return {"quarantined": [], "restored": []}
+            return {"quarantined": [], "restored": [], "contested": []}
         res = self.trust.recompute()
         self._anchor()
-        return {"quarantined": res["quarantined"], "restored": res["restored"]}
+        return {"quarantined": res["quarantined"], "restored": res["restored"], "contested": res["contested"]}
 
     def propose_justification(self, claim_id: str, proposal: WriteProposal) -> WriteResult:
         """New evidence from a user or agent: the same write-path checks as a new memory (unknown ids, Auth(p),
@@ -366,7 +439,12 @@ class LedgerService:
         if any(not v.ok for v in verdicts):
             return WriteResult(False, [], verdicts)
         score = min((v.score for v in verdicts), default=1.0)
-        self.add_justification(claim_id, proposal.context_ids, score, agent_id=proposal.agent_id)
+        sources = [s for i in proposal.context_ids if (s := self.store.get_source(i)) is not None]
+        claims = [c for i in proposal.context_ids if (c := self.store.get_claim(i)) is not None]
+        for d in self._derivations(claim_id, proposal, score, self._attribute(proposal, sources, claims)):
+            self.store.add_derivation(d)  # the evidence's own supporters, like a write (slide 6)
+        self.trust.recompute()
+        self._anchor()
         return WriteResult(True, [claim_id], verdicts)
 
     def add_justification(self, claim_id: str, context_ids: list[str], score: float = 1.0,
@@ -391,7 +469,8 @@ class LedgerService:
         lineage = [
             {"derivation": d.id, "agent_id": d.agent_id,
              "exposed_to": [self._node(p, visited) for p in d.exposed_to],
-             "supported_by": dict(d.supported_by)}
+             "supported_by": dict(d.supported_by),
+             "facts": [{"fact": f.fact, "parents": dict(f.parents), "joint": f.joint} for f in d.facts]}
             for d in self.store.derivations_for(claim_id)
         ]
         return {"claim": claim_id, "text": claim.text, "status": claim.status.value, "trust": claim.trust,
