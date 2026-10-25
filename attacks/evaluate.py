@@ -205,6 +205,12 @@ def main(argv: list[str] | None = None) -> dict:
     ap.add_argument("--out", default="results/attacks")
     ap.add_argument("--run-id", default=datetime.now(UTC).strftime("%Y%m%d-%H%M%S"))
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--workers", type=int, default=1,
+                    help="episodes played concurrently (vLLM on Brev: 16); take added-ms latencies from a 1-worker run")
+    ap.add_argument("--resume", action="store_true",
+                    help="same --run-id: keep versions whose raw rows are already complete (restart after a crash)")
+    ap.add_argument("--max-consecutive-errors", type=int, default=20,
+                    help="stop the run after this many errored episodes in a row, e.g. the LLM server died (0: never)")
     a = ap.parse_args(argv)
     cfg = SuiteConfig(benchmarks=[] if a.no_benchmarks else SuiteConfig().benchmarks)
     eps, skipped = build(a.split, cfg)
@@ -217,10 +223,15 @@ def main(argv: list[str] | None = None) -> dict:
     os.environ["MEMLEDGER_GUARD_BACKEND"] = a.guards
     versions = [v.strip() for v in a.versions.split(",") if v.strip()]
     summary = run(eps, versions, a.out, a.run_id, make_llm(a.llm, a.model, a.base_url), backend=a.guards,
-                  episodes_label=f"attacks.suite:{a.split}", split=a.split, progress=not a.quiet)
+                  episodes_label=f"attacks.suite:{a.split}", split=a.split, progress=not a.quiet,
+                  workers=a.workers, resume=a.resume, max_consecutive_errors=a.max_consecutive_errors)
     raw = Path(a.out) / "raw" / a.run_id
     rows = {v: [json.loads(x) for x in (raw / f"{v}.jsonl").read_text().splitlines()] for v in versions}
     res, md = tables(eps, rows)
+    res["latency_valid"] = summary["latency_valid"]
+    if not summary["latency_valid"]:
+        md = (f"> **Added ms (write/read/gate) are NOT meaningful here**: {a.workers} parallel episodes add thread "
+              "contention. Take latency from a 1-worker run (`make eval-latency`).\n\n" + md)
     d = Path(a.out) / a.run_id
     (d / "families.json").write_text(json.dumps(res, indent=1, default=str) + "\n")
     (d / "families.md").write_text(md + "\n")

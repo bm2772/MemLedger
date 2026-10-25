@@ -138,6 +138,193 @@ def test_tool_ingest_is_attributed_to_the_session_that_fetched_it():
     assert web["session"] == "res" and web["poison"]  # the researcher read it, not the default (finance) user
 
 
+# ---- concurrency and resume (Brev run: vLLM serves episodes in parallel; a crashed run restarts where it stopped)
+def outcome(r):
+    return (r["episode"], r["correct"], r["expected_calls_ok"], r["hijacked"], r["error"], len(r["leaks"]),
+            [w["accepted"] for w in r["writes"]], r["llm"]["calls"])
+
+
+def test_workers_give_the_same_rows_in_order_with_per_episode_token_counts(tmp_path):
+    episodes = list(eps().values())
+    seq = run(episodes, ["baseline", "full"], tmp_path / "a", "seq", GullibleLLM(), backend="lexical")
+    llm = GullibleLLM()
+    par = run(episodes, ["baseline", "full"], tmp_path / "b", "par", llm, backend="lexical", workers=4)
+    for v in ("baseline", "full"):
+        a = [json.loads(x) for x in (tmp_path / "a" / "raw" / "seq" / f"{v}.jsonl").read_text().splitlines()]
+        b = [json.loads(x) for x in (tmp_path / "b" / "raw" / "par" / f"{v}.jsonl").read_text().splitlines()]
+        assert [outcome(r) for r in a] == [outcome(r) for r in b]
+        assert seq["metrics"][v]["llm"] == par["metrics"][v]["llm"]
+    assert par["workers"] == 4 and llm.meter.calls == sum(  # the shared client still holds the run totals
+        r["llm"]["calls"] for v in ("baseline", "full")
+        for r in map(json.loads, (tmp_path / "b" / "raw" / "par" / f"{v}.jsonl").read_text().splitlines()))
+
+
+def test_resume_keeps_complete_versions_and_reruns_the_rest(tmp_path, capsys):
+    episodes = list(eps().values())
+    run(episodes, ["baseline"], tmp_path, "r", GullibleLLM(), backend="lexical")
+    llm = GullibleLLM()
+    out = run(episodes, ["baseline", "full"], tmp_path, "r", llm, backend="lexical", resume=True)
+    assert "[baseline] resumed: 8 episodes" in capsys.readouterr().out
+    assert set(out["metrics"]) == {"baseline", "full"} and out["manifests"]["baseline"]["version"] == "baseline"
+    full_calls = out["metrics"]["full"]["llm"]["calls"]
+    assert llm.meter.calls == full_calls  # only `full` was played
+    (tmp_path / "raw" / "r" / "full.jsonl").write_text("")  # an incomplete version is played again
+    again = GullibleLLM()
+    run(episodes, ["baseline", "full"], tmp_path, "r", again, backend="lexical", resume=True)
+    assert again.meter.calls == full_calls
+
+
+def test_shared_models_are_called_under_one_lock():
+    import threading
+
+    from eval.runner import _Serialised
+
+    lock, seen = threading.Lock(), []
+
+    class Model:
+        label = "x"
+
+        def __call__(self, a, b):
+            seen.append(lock.locked())
+            return a + b
+
+        def score(self, t):
+            seen.append(lock.locked())
+            return len(t)
+
+    m = _Serialised(Model(), lock)
+    assert m(1, 2) == 3 and m.score("abc") == 3 and m.label == "x" and seen == [True, True]
+
+
+class DeadLLM(GullibleLLM):
+    """The LLM server is down: every task episode errors fast (review of #19)."""
+
+    model = "fake-gullible"
+
+    def complete(self, messages, tools):
+        raise ConnectionError("vLLM is down")
+
+
+def test_resume_plays_again_a_version_whose_episodes_errored(tmp_path, capsys):
+    episodes = list(eps().values())
+    dead = run(episodes, ["baseline"], tmp_path, "r", DeadLLM(), backend="lexical", workers=4)
+    assert dead["metrics"]["baseline"]["error_rate"]["x"] > 0
+    llm = GullibleLLM()
+    out = run(episodes, ["baseline"], tmp_path, "r", llm, backend="lexical", workers=4, resume=True)
+    assert "not resumed:" in capsys.readouterr().out and llm.meter.calls > 0
+    assert out["metrics"]["baseline"]["error_rate"]["x"] == 0
+
+
+def test_resume_refuses_rows_from_another_configuration(tmp_path):
+    episodes = list(eps().values())
+    run(episodes, ["baseline"], tmp_path, "r", GullibleLLM(), backend="lexical")
+    other = GullibleLLM()
+    other.model = "qwen3:8b"
+    with pytest.raises(SystemExit, match="another configuration \\(llm\\)"):
+        run(episodes, ["baseline"], tmp_path, "r", other, backend="lexical", resume=True)
+    with pytest.raises(SystemExit, match="episodes_sha256"):
+        run(episodes[:-1], ["baseline"], tmp_path, "r", GullibleLLM(), backend="lexical", resume=True)
+
+
+def test_resume_plays_again_rows_without_a_fingerprint(tmp_path):
+    episodes = list(eps().values())
+    run(episodes, ["baseline"], tmp_path, "r", GullibleLLM(), backend="lexical")
+    (tmp_path / "raw" / "r" / "run.json").unlink()  # rows of an older run
+    llm = GullibleLLM()
+    out = run(episodes, ["baseline"], tmp_path, "r", llm, backend="lexical", resume=True)
+    assert llm.meter.calls > 0 and out["guard_models"] == {}
+    assert json.loads((tmp_path / "raw" / "r" / "run.json").read_text())["llm"] == "fake-gullible"
+
+
+def test_run_stops_after_consecutive_errors_and_resume_plays_the_version_again(tmp_path):
+    episodes = list(eps().values())
+    with pytest.raises(SystemExit, match="episodes in a row errored in baseline"):
+        run(episodes, ["baseline"], tmp_path, "r", DeadLLM(), backend="lexical", max_consecutive_errors=1)
+    assert not (tmp_path / "raw" / "r" / "baseline.jsonl").exists()  # the version in progress is not saved
+    llm = GullibleLLM()
+    out = run(episodes, ["baseline"], tmp_path, "r", llm, backend="lexical", resume=True)
+    assert llm.meter.calls > 0 and out["metrics"]["baseline"]["error_rate"]["x"] == 0
+    # isolated errors (3 of 8 here, not in a row of 20) do not stop a run
+    assert run(episodes, ["baseline"], None, "x", DeadLLM(), backend="lexical")["metrics"]["baseline"]["error_rate"]["x"]
+
+
+def test_summary_marks_latency_and_records_the_memshield_model(tmp_path, monkeypatch):
+    model = tmp_path / "memshield"
+    model.mkdir()
+    (model / "threshold.json").write_text(json.dumps({"threshold": 0.99}))
+    monkeypatch.setenv("MEMLEDGER_MEMSHIELD_MODEL", str(model))
+    episodes = list(eps().values())[:2]
+    par = run(episodes, ["baseline"], None, "p", GullibleLLM(), backend="lexical", workers=4)
+    assert par["latency_valid"] is False
+    assert par["memshield_model"] == {"path": str(model), "threshold": {"threshold": 0.99}}
+    monkeypatch.delenv("MEMLEDGER_MEMSHIELD_MODEL")
+    seq = run(episodes, ["baseline"], None, "s", GullibleLLM(), backend="lexical")
+    assert seq["latency_valid"] is True and seq["memshield_model"] is None
+
+
+def test_families_md_says_latency_is_not_meaningful_with_workers(tmp_path):
+    from attacks.evaluate import main as evaluate
+
+    args = ["--split", "dev", "--families", "minja", "--limit-per-family", "1", "--benign-per-family", "0",
+            "--no-benchmarks", "--out", str(tmp_path), "--quiet"]
+    evaluate(args + ["--workers", "2", "--run-id", "par"])
+    evaluate(args + ["--run-id", "seq"])
+    assert "NOT meaningful" in (tmp_path / "par" / "families.md").read_text()
+    assert "NOT meaningful" not in (tmp_path / "seq" / "families.md").read_text()
+    assert json.loads((tmp_path / "par" / "families.json").read_text())["latency_valid"] is False
+
+
+def test_a_new_configuration_without_resume_removes_the_old_rows(tmp_path, capsys):
+    """Ahan's #19 re-review: model X runs baseline+full, model Y runs baseline only (no --resume); a later --resume
+    by Y must not keep X's `full`."""
+    episodes = list(eps().values())
+    run(episodes, ["baseline", "full"], tmp_path, "r", GullibleLLM(), backend="lexical")
+    y = GullibleLLM()
+    y.model = "model-y"
+    run(episodes, ["baseline"], tmp_path, "r", y, backend="lexical")
+    assert "removing 2 raw files of another configuration" in capsys.readouterr().out
+    assert not (tmp_path / "raw" / "r" / "full.jsonl").exists()
+    y2 = GullibleLLM()
+    y2.model = "model-y"
+    out = run(episodes, ["baseline", "full"], tmp_path, "r", y2, backend="lexical", resume=True)
+    assert out["metrics"]["full"]["llm"]["calls"] > 0  # full played by model Y, not kept from X
+    assert y2.meter.calls == out["metrics"]["full"]["llm"]["calls"]  # baseline was resumed
+
+
+def test_a_cut_off_raw_file_is_played_again_and_rows_are_written_atomically(tmp_path, capsys):
+    episodes = list(eps().values())
+    run(episodes, ["baseline"], tmp_path, "r", GullibleLLM(), backend="lexical")
+    raw = tmp_path / "raw" / "r" / "baseline.jsonl"
+    assert not list(raw.parent.glob("*.tmp"))
+    raw.write_text(raw.read_text()[:-40])  # crash mid-write in an older run
+    llm = GullibleLLM()
+    run(episodes, ["baseline"], tmp_path, "r", llm, backend="lexical", resume=True)
+    assert "is not readable" in capsys.readouterr().out and llm.meter.calls > 0
+
+
+def test_episodes_without_llm_calls_do_not_reset_the_error_streak(tmp_path):
+    """Omkaar's #19 re-review: scripted episodes succeed while the LLM is down and used to reset the streak (the smoke
+    fixture finished with 3/8 errored)."""
+    with pytest.raises(SystemExit, match="3 episodes in a row errored"):
+        run(list(eps().values()), ["baseline"], tmp_path, "r", DeadLLM(), backend="lexical", max_consecutive_errors=3)
+
+
+def test_summary_names_the_checker_that_actually_loaded(monkeypatch):
+    """Omkaar's #19 re-review: checkers load lazily, so a Prompt Guard 2 -> ProtectAI fallback happens after the start."""
+    from eval import runner
+
+    class LazyScreen:
+        model_id = "meta-llama/Llama-Prompt-Guard-2-86M"
+
+        def __call__(self, text):
+            self.model_id = "protectai/deberta-v3-base-prompt-injection-v2"  # gated: the fallback loaded
+            return 0.0
+
+    monkeypatch.setattr(runner, "load_guard_models", lambda backend: {"injection": LazyScreen()})
+    out = run(list(eps().values()), ["full"], None, "g", GullibleLLM(), backend="lexical")
+    assert out["guard_models"] == {"injection": "protectai/deberta-v3-base-prompt-injection-v2"}
+
+
 def test_scripted_tool_step_ingest_is_attributed_to_its_session():
     """Copilot on #18: a source fetched by a scripted `tool` step of a non-default session was credited to the default."""
     ep = Episode.from_dict({

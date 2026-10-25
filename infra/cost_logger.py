@@ -5,6 +5,7 @@ OpenAI-compatible responses (vLLM / Ollama) so runs can report tokens next to do
 
     python infra/cost_logger.py session --member M4 --instance brev-a10g-1 --gpu A10G --hours 1.5 \
         --rate 1.10 --purpose "baseline run" [--prompt-tokens N --completion-tokens N]
+    python infra/cost_logger.py session ... --from-summary results/attacks/<run_id>/summary.json   # tokens of a run
     python infra/cost_logger.py summary
 """
 
@@ -12,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import os
 from collections import defaultdict
 from dataclasses import dataclass
@@ -77,6 +79,13 @@ class TokenMeter:
         self.completion_tokens += int(get("completion_tokens", 0) or 0)
 
 
+def run_tokens(summary_path: Path | str) -> tuple[int, int]:
+    """(prompt, completion) tokens of an eval run, summed over its versions (eval/runner.py summary.json)."""
+    metrics = json.loads(Path(summary_path).read_text())["metrics"]
+    return (sum(m["llm"]["prompt_tokens"] for m in metrics.values()),
+            sum(m["llm"]["completion_tokens"] for m in metrics.values()))
+
+
 def summarize(path: Path | str = BUDGET_CSV, budget: float = BUDGET_USD) -> dict:
     path = Path(path)
     usd = hours = 0.0
@@ -102,10 +111,13 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--rate", type=float, help="USD per hour; defaults to $BREV_RATE_USD_PER_HOUR")
     s.add_argument("--prompt-tokens", type=int, default=0)
     s.add_argument("--completion-tokens", type=int, default=0)
+    s.add_argument("--from-summary", help="take the token counts from this eval summary.json")
     s.add_argument("--date")
     sub.add_parser("summary", help="totals against the $1,000 budget")
     a = ap.parse_args(argv)
     if a.cmd == "session":
+        if a.from_summary:
+            a.prompt_tokens, a.completion_tokens = run_tokens(a.from_summary)
         row = log_session(member=a.member, instance=a.instance, gpu=a.gpu, hours=a.hours, purpose=a.purpose,
                           usd=a.usd, rate=a.rate, prompt_tokens=a.prompt_tokens,
                           completion_tokens=a.completion_tokens, date=a.date, path=a.path)
