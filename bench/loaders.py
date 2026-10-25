@@ -314,14 +314,29 @@ def bipia_episodes(task: str, i: int, row: dict, attack: tuple[str, str] | None,
                     markers=[attack[1]] if attack else [], stub_tools=stubs, **meta)
 
 
+def _norm_doc(text: str) -> str:
+    return " ".join(text.split()).lower()
+
+
+def _bipia_rows(task: str, split: str, root) -> list[dict]:
+    try:
+        return _jsonl("bipia", f"{task}/{split}.jsonl", root)
+    except FileNotFoundError:  # fixtures may ship only one split
+        return []
+
+
 def load_bipia(split="test", limit=DEFAULT_LIMIT, seed=0, root=None) -> list[Episode]:
     """BIPIA email + table documents with a text attack inserted at the start, middle or end, and the clean document.
-    Attacks come from the same split as the documents (train for tuning, test for evaluation)."""
+    Attacks come from the same split as the documents (train for tuning, test for evaluation); train documents that
+    also appear in BIPIA test are dropped from the tuning (dev/train) side."""
     s = _official(split, {"train": "train", "dev": "train", "test": "test"})
     by_cat = _json("bipia", f"text_attack_{s}.json", root)
     cycle = [(c, a) for k in range(max(len(v) for v in by_cat.values())) for c, v in sorted(by_cat.items())
              for a in v[k:k + 1]]  # round-robin over the categories
     rows = [(t, i, r) for t in ("email", "table") for i, r in enumerate(_jsonl("bipia", f"{t}/{s}.jsonl", root))]
+    if s != "test":  # tuning data never overlaps test: BIPIA's own train and test share a few clean emails
+        held_out = {_norm_doc(r["context"]) for t in ("email", "table") for r in _bipia_rows(t, "test", root)}
+        rows = [x for x in rows if _norm_doc(x[2]["context"]) not in held_out]
     out = []
     for n, (t, i, r) in enumerate(_diverse(rows, limit, seed, lambda x: x[0])):
         attack, where = cycle[(n * 7 + seed) % len(cycle)], ("start", "middle", "end")[n % 3]
