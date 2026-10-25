@@ -7,8 +7,10 @@ memory-specific patterns ("whenever the user asks ..., say ...") stand in for it
 
 from __future__ import annotations
 
+import json
 import os
 import re
+from pathlib import Path
 
 from memledger.core.types import Source, Verdict, WriteProposal
 from memledger.guards.input_screen import rule_score
@@ -36,15 +38,23 @@ def default_memshield() -> TextClassifier:
     if not path:
         raise ImportError("no memshield model: run python -m memledger.guards.train.train_memshield and set "
                           "MEMLEDGER_MEMSHIELD_MODEL, or MEMLEDGER_GUARD_BACKEND=lexical")
-    return HFTextClassifier(path)
+    clf = HFTextClassifier(path)
+    clf.threshold = model_threshold(path)  # type: ignore[attr-defined]
+    return clf
+
+
+def model_threshold(path: str, default: float = 0.5) -> float:
+    """Decision threshold chosen on the validation split at training time (<model>/threshold.json)."""
+    f = Path(path) / "threshold.json"
+    return float(json.loads(f.read_text())["threshold"]) if f.is_file() else default
 
 
 class MemshieldCheck:
     name = "memshield"
 
-    def __init__(self, classifier: TextClassifier | None = None, threshold: float = 0.5) -> None:
+    def __init__(self, classifier: TextClassifier | None = None, threshold: float | None = None) -> None:
         self.classifier = classifier or default_memshield()
-        self.threshold = threshold
+        self.threshold = threshold if threshold is not None else float(getattr(self.classifier, "threshold", 0.5))
 
     def check(self, proposal: WriteProposal, sources: list[Source]) -> Verdict:
         p = float(self.classifier(proposal.text))

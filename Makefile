@@ -23,10 +23,11 @@ data:  # published benchmarks into data/ (gitignored); skips what is offline or 
 	.venv/bin/python -m bench.download $(DATA_SETS)
 suite:  # dev/test attack suite incl. downloaded benchmarks; only the manifest is committed
 	PYTHONPATH=. .venv/bin/python -m attacks.suite --out data/attacks --manifest docs/results/suite_manifest.json
-memshield:  # fine-tune the write-time memory screen on memshield TRAIN (validation for early stopping)
-	# run on Brev (GPU, a few minutes). Macs: MPS gives NaN losses with DeBERTa-v3, so --cpu, which is far too slow
-	.venv/bin/python -m memledger.guards.train.train_memshield --data-dir data/memshield --out $(MEMSHIELD_DIR) \
-		$(if $(filter Darwin,$(shell uname -s)),--cpu)
+memshield:  # fine-tune the write-time memory screen on memshield TRAIN (threshold picked on validation)
+	# float32 works on MPS (~9 min on an M4, see docs/results/memshield.md); unload Ollama models first
+	PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.8 PYTORCH_MPS_LOW_WATERMARK_RATIO=0.6 \
+	.venv/bin/python -m memledger.guards.train.train_memshield --data data/memshield --out $(MEMSHIELD_DIR) \
+		--epochs 3 --lr 2e-5 --batch 2 --grad-accum 8 --max-length 384
 test:
 	.venv/bin/pytest -q
 lint:
