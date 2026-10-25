@@ -108,3 +108,26 @@ def test_store_written_before_leaf_records_is_migrated(tmp_path, monkeypatch):
     again = build_service("provenance", store=SQLiteStore(path))
     again.signing_key, again.public_key = svc.signing_key, svc.public_key
     assert again.verify_claim(x)
+
+
+def test_leaf_inserted_into_anchored_is_never_signed_by_a_later_write():
+    """PR #15 review (M1): a forged claim plus a matching `anchored` row must not be absorbed by the next root."""
+    from memledger.core.service import IntegrityError, LedgerService, leaf_of
+    from memledger.core.types import Claim, Derivation, Labels, now
+
+    svc = LedgerService()
+    s = svc.ingest("Acme account is 1234.", SourceKind.INTERNAL, A)
+    svc.propose_write(WriteProposal("Acme account is 1234.", [s.id], A))
+    t, lab = now(), Labels("team_a")
+    forged = Claim("c_forged", "Acme account is 9999.", lab, trust=0.9, valid_from=t, recorded_at=t,
+                   content_hash=item_hash("Acme account is 9999.", t, [s.content_hash], lab))
+    svc.store.add_claim(forged)
+    svc.store.add_derivation(Derivation("d_f", forged.id, [s.id], {s.id: 1.0}, created_at=t))
+    svc.store.conn.execute("INSERT INTO anchored(item_id,leaf,seq) VALUES (?,?,1)",
+                           (forged.id, leaf_of(forged.id, forged.content_hash)))
+    svc.store.conn.commit()
+    assert svc.verify_claim(forged.id) is False
+    n = len(svc.store.hash_log())
+    with pytest.raises(IntegrityError):
+        svc.ingest("unrelated later page", SourceKind.WEB, A)
+    assert len(svc.store.hash_log()) == n and svc.verify_claim(forged.id) is False

@@ -54,6 +54,10 @@ def leaf_of(item_id: str, content_hash: str) -> str:
     return hashlib.sha256(f"{item_id}|{content_hash}".encode()).hexdigest()
 
 
+class IntegrityError(RuntimeError):
+    """The stored ledger no longer matches its signed root; the service refuses to sign over it."""
+
+
 def _new_id(prefix: str) -> str:
     return f"{prefix}{uuid.uuid4().hex}"
 
@@ -107,7 +111,8 @@ class LedgerService:
         self._migrated = True
         if self.store.anchored_leaves() or self.store.latest_root() is None:  # new store, or already recorded
             return
-        self._anchor([(x.id, x.content_hash) for x in [*self.store.list_sources(), *self.store.list_claims()]])
+        self._anchor([(x.id, x.content_hash) for x in [*self.store.list_sources(), *self.store.list_claims()]],
+                     migrate=True)
 
     # ---- timing (M4 "added delay": wall time of each service call, in ms)
     def _timed(self, op: str, t0: float) -> None:
@@ -227,17 +232,28 @@ class LedgerService:
                      content_hash=item_hash(p.text, t, [h for _, h in parents], labels))
 
     # ---- hash chain
-    def _anchor(self, new: list[tuple[str, str]] = ()) -> None:
+    def _anchor(self, new: list[tuple[str, str]] = (), migrate: bool = False) -> None:
         """Sign a root over every item anchored so far plus `new` (item id, content hash) pairs, the items this write
-        batch created. The leaf set only grows with items the service itself wrote; it is never rebuilt from the
-        current rows, so a row edited in storage can never become part of a signed root."""
+        batch created. The leaf set only grows with items the service itself wrote, starting from the set the latest
+        signed root covers; it is never rebuilt from the current rows, so neither a row edited in storage nor a row
+        inserted into `anchored` can become part of a signed root."""
         if not self._migrated:
             self._migrate_anchors()
-        leaves = self.store.anchored_leaves()
+        leaves = self._verified_leaves(migrate)
         added = {i: leaf_of(i, h) for i, h in new if i not in leaves}
         leaves.update(added)
         root = merkle_root(list(leaves.values()))
         self.store.append_hash_log(root, self.signing_key.sign(bytes.fromhex(root)), len(leaves), added)
+
+    def _verified_leaves(self, migrate: bool) -> dict[str, str]:
+        """The leaf set to extend: empty for a new store or a migration, otherwise exactly the set the latest signed
+        root covers. Refuses to sign if the stored leaves no longer reproduce that root (rows added or removed)."""
+        if migrate or self.store.latest_root() is None:
+            return {}
+        leaves = self._signed_leaves()
+        if leaves is None:
+            raise IntegrityError("stored leaf set does not reproduce the latest signed root; refusing to sign")
+        return dict(leaves)
 
     def _chain_ok(self) -> bool:
         log = self.store.hash_log()
