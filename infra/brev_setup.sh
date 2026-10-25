@@ -40,6 +40,7 @@ if ! command -v python3.11 >/dev/null; then
   sudo apt-get install -y python3.11 python3.11-venv python3.11-dev
 fi
 make -C "$REPO" PY=python3.11 setup-models data suite
+# prefer Ahan's model (scp it to $REPO/models/memshield first, infra/README.md); otherwise fine-tune one here
 [ -f "$REPO/models/memshield/config.json" ] || make -C "$REPO" memshield  # data/memshield comes from `make data`
 
 if curl -sf "http://localhost:$PORT/health" >/dev/null; then

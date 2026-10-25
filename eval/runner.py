@@ -13,7 +13,9 @@ checker models are shared): vLLM serves the requests in parallel. Each episode g
 its token counts stay its own, and the checker models are called under one lock. Latencies measured with workers > 1
 include contention, so take the "added ms" numbers from a workers = 1 run. resume=True keeps a version whose raw rows
 already cover these episodes without errors (a run that died half-way restarts at the first unfinished version); the
-run's configuration is written to raw/<run_id>/run.json and a resume with a different one is refused.
+run's configuration is written to raw/<run_id>/run.json and a resume with a different one is refused. After
+max_consecutive_errors errored episodes in a row (the LLM server died) the run stops instead of filling the remaining
+versions with errors; the version in progress is not saved, so --resume plays it again.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ import argparse
 import copy
 import hashlib
 import json
+import os
 import threading
 import time
 from collections import defaultdict
@@ -242,14 +245,14 @@ def _resumed(path: Path, episodes: list[Episode]) -> list[dict] | None:
 
 
 def _play(episodes: list[Episode], v: Version, llm, models: dict, backend: str, workers: int,
-          progress: bool) -> tuple[list[dict], dict | None]:
+          progress: bool, max_consecutive_errors: int = 20) -> tuple[list[dict], dict | None]:
     def one(i: int):
         mine = _own_llm(llm)
         row, m = run_one(episodes[i], v, mine, models, backend)
         return i, row, m, mine.meter
 
     rows: list[dict | None] = [None] * len(episodes)
-    manifest = None
+    manifest, streak = None, 0
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
         futures = [pool.submit(one, i) for i in range(len(episodes))]
         for done, fut in enumerate(as_completed(futures), 1):
@@ -260,12 +263,30 @@ def _play(episodes: list[Episode], v: Version, llm, models: dict, backend: str, 
             if progress:
                 print(f"[{v.name} {done}/{len(episodes)}] {episodes[i].id} {row['wall_s']:.1f}s"
                       f"{' ERROR ' + row['error'] if row['error'] else ''}", flush=True)
+            streak = streak + 1 if row["error"] else 0
+            if max_consecutive_errors and streak >= max_consecutive_errors:
+                pool.shutdown(wait=False, cancel_futures=True)
+                raise SystemExit(f"stopping: {streak} episodes in a row errored in {v.name} (last: {row['error']}); "
+                                 "is the LLM server up? Fix it and re-run with --resume (this version is played again)")
     return rows, manifest
+
+
+def _memshield_model() -> dict | None:
+    """The fine-tuned memshield used (path, threshold, test metrics), so results say which weights ran."""
+    path = os.environ.get("MEMLEDGER_MEMSHIELD_MODEL")
+    if not path:
+        return None
+    out: dict = {"path": path}
+    for name in ("threshold", "test_metrics"):
+        f = Path(path) / f"{name}.json"
+        if f.exists():
+            out[name] = json.loads(f.read_text())
+    return out
 
 
 def run(episodes: list[Episode], versions: list[str], out_dir: str | Path | None, run_id: str, llm=None,
         backend: str | None = None, episodes_label: str = "", split: str | None = None,
-        progress: bool = False, workers: int = 1, resume: bool = False) -> dict:
+        progress: bool = False, workers: int = 1, resume: bool = False, max_consecutive_errors: int = 20) -> dict:
     llm = llm or GullibleLLM()
     backend = backend or guard_backend()
     models = load_guard_models(backend)
@@ -276,7 +297,9 @@ def run(episodes: list[Episode], versions: list[str], out_dir: str | Path | None
     summary: dict = {"run_id": run_id, "created": datetime.now(UTC).isoformat(timespec="seconds"),
                      "episodes": episodes_label, "split": split, "n_episodes": len(episodes),
                      "llm": llm.model, "guard_backend": backend, "guard_models": fingerprint["guard_models"],
-                     "workers": workers, "versions": {}, "manifests": {}, "metrics": {}}
+                     "memshield_model": _memshield_model(), "workers": workers,
+                     "latency_valid": workers == 1,  # added-ms with parallel episodes includes thread contention
+                     "versions": {}, "manifests": {}, "metrics": {}}
     raw_dir = Path(out_dir) / "raw" / run_id if out_dir is not None else None
     if raw_dir is not None:
         fp_file = raw_dir / "run.json"
@@ -296,7 +319,7 @@ def run(episodes: list[Episode], versions: list[str], out_dir: str | Path | None
             manifest = build(v, episodes[0].registry, models, backend=backend).manifest if episodes else None
             print(f"[{v.name}] resumed: {len(rows)} episodes already in {raw_file}", flush=True)
         else:
-            rows, manifest = _play(episodes, v, llm, models, backend, workers, progress)
+            rows, manifest = _play(episodes, v, llm, models, backend, workers, progress, max_consecutive_errors)
         all_rows[v.name] = rows
         metrics = compute(rows)
         summary["metrics"][v.name] = metrics
@@ -358,12 +381,13 @@ def main(argv: list[str] | None = None) -> dict:
     ap.add_argument("--quiet", action="store_true")
     ap.add_argument("--workers", type=int, default=1, help="episodes played concurrently (vLLM: 16); latency: 1")
     ap.add_argument("--resume", action="store_true", help="keep versions whose raw rows for this run id are complete")
+    ap.add_argument("--max-consecutive-errors", type=int, default=20, help="stop after this many in a row (0: never)")
     a = ap.parse_args(argv)
     eps = load_episodes(a.episodes, a.split, a.limit, a.categories.split(",") if a.categories else None)
     llm = make_llm(a.llm, a.model, a.base_url, think=True if a.think else None)
     summary = run(eps, [v.strip() for v in a.versions.split(",") if v.strip()], a.out, a.run_id, llm,
                   backend=a.guards, episodes_label=a.episodes, split=a.split, progress=not a.quiet,
-                  workers=a.workers, resume=a.resume)
+                  workers=a.workers, resume=a.resume, max_consecutive_errors=a.max_consecutive_errors)
     print(table(summary))
     return summary
 

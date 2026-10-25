@@ -21,7 +21,10 @@ Docker instead: `docker build -f infra/Dockerfile -t memledger:gpu . && docker r
 # 1. GPU: 40 GB+ (L40S 48 GB or A100) - vLLM gets 80% (GPU_UTIL), the checker models the rest
 curl -fsSL https://raw.githubusercontent.com/bm2772/MemLedger/integration/v1/infra/brev_setup.sh -o brev_setup.sh
 sudo shutdown -h +300                              # backstop: never leave the GPU running
-MODEL=Qwen/Qwen3-8B BRANCH=integration/v1 bash brev_setup.sh   # setup, data, suite, memshield fine-tune, vLLM
+# memshield: use Ahan's model (docs/results/memshield.md, threshold 0.990) - copy it BEFORE brev_setup.sh, which only
+# fine-tunes a new one (different weights/threshold) when models/memshield is missing:
+#   (on the Mac) scp -r models/memshield ubuntu@<instance>:/home/ubuntu/workspace/MemLedger/models/
+MODEL=Qwen/Qwen3-8B BRANCH=integration/v1 bash brev_setup.sh   # setup, data, suite, memshield (if missing), vLLM
 export HF_HOME=/home/ubuntu/workspace/hf-cache && cd /home/ubuntu/workspace/MemLedger
 # 2. smoke: 1 episode per family x 5 versions; must print no "WARNING: ... episodes errored"
 make eval-brev-smoke
@@ -39,6 +42,10 @@ sudo shutdown -h now
 - Use the full model name (`MODEL=Qwen/Qwen3-8B`): the eval client switches qwen3 thinking off by name; the vLLM
   alias `main` would leave it on (~30x slower).
 - `make eval-brev` sets `MEMLEDGER_DEVICE=cuda`; without it the checkers run on the CPU.
+- `summary.json` records the memshield model that ran (`memshield_model`: path, threshold, test metrics) and the
+  checker models (`guard_models`); `latency_valid` is false for a multi-worker run and families.md says so.
+- If vLLM dies mid-run, the run stops after 20 errored episodes in a row; `make eval-brev` again resumes, replaying
+  the unfinished version (versions with any errored row are never kept).
 - Results from `--workers 16` are identical to a 1-worker run (checked on the offline test split); only the per-episode
   wall time and the added-ms latencies include contention, hence `make eval-latency`.
 

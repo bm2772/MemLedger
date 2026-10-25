@@ -234,3 +234,41 @@ def test_resume_plays_again_rows_without_a_fingerprint(tmp_path):
     out = run(episodes, ["baseline"], tmp_path, "r", llm, backend="lexical", resume=True)
     assert llm.meter.calls > 0 and out["guard_models"] == {}
     assert json.loads((tmp_path / "raw" / "r" / "run.json").read_text())["llm"] == "fake-gullible"
+
+
+def test_run_stops_after_consecutive_errors_and_resume_plays_the_version_again(tmp_path):
+    episodes = list(eps().values())
+    with pytest.raises(SystemExit, match="episodes in a row errored in baseline"):
+        run(episodes, ["baseline"], tmp_path, "r", DeadLLM(), backend="lexical", max_consecutive_errors=1)
+    assert not (tmp_path / "raw" / "r" / "baseline.jsonl").exists()  # the version in progress is not saved
+    llm = GullibleLLM()
+    out = run(episodes, ["baseline"], tmp_path, "r", llm, backend="lexical", resume=True)
+    assert llm.meter.calls > 0 and out["metrics"]["baseline"]["error_rate"]["x"] == 0
+    # isolated errors (3 of 8 here, not in a row of 20) do not stop a run
+    assert run(episodes, ["baseline"], None, "x", DeadLLM(), backend="lexical")["metrics"]["baseline"]["error_rate"]["x"]
+
+
+def test_summary_marks_latency_and_records_the_memshield_model(tmp_path, monkeypatch):
+    model = tmp_path / "memshield"
+    model.mkdir()
+    (model / "threshold.json").write_text(json.dumps({"threshold": 0.99}))
+    monkeypatch.setenv("MEMLEDGER_MEMSHIELD_MODEL", str(model))
+    episodes = list(eps().values())[:2]
+    par = run(episodes, ["baseline"], None, "p", GullibleLLM(), backend="lexical", workers=4)
+    assert par["latency_valid"] is False
+    assert par["memshield_model"] == {"path": str(model), "threshold": {"threshold": 0.99}}
+    monkeypatch.delenv("MEMLEDGER_MEMSHIELD_MODEL")
+    seq = run(episodes, ["baseline"], None, "s", GullibleLLM(), backend="lexical")
+    assert seq["latency_valid"] is True and seq["memshield_model"] is None
+
+
+def test_families_md_says_latency_is_not_meaningful_with_workers(tmp_path):
+    from attacks.evaluate import main as evaluate
+
+    args = ["--split", "dev", "--families", "minja", "--limit-per-family", "1", "--benign-per-family", "0",
+            "--no-benchmarks", "--out", str(tmp_path), "--quiet"]
+    evaluate(args + ["--workers", "2", "--run-id", "par"])
+    evaluate(args + ["--run-id", "seq"])
+    assert "NOT meaningful" in (tmp_path / "par" / "families.md").read_text()
+    assert "NOT meaningful" not in (tmp_path / "seq" / "families.md").read_text()
+    assert json.loads((tmp_path / "par" / "families.json").read_text())["latency_valid"] is False
