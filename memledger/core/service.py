@@ -50,6 +50,9 @@ def item_hash(content: str, recorded_at: datetime, parent_hashes: list[str], lab
     return hashlib.sha256(data).hexdigest()
 
 
+MAX_JUSTIFICATIONS = 16  # derivations recorded per write (alternative supporters of several facts multiply)
+
+
 def _new_id(prefix: str) -> str:
     return f"{prefix}{uuid.uuid4().hex}"
 
@@ -142,13 +145,15 @@ class LedgerService:
         existing = next((c for c in self.store.list_claims(team=team)
                          if c.status != Status.QUARANTINED and c.text.strip().lower() == key), None)
         if existing is not None:  # same fact again: one more justification, not a new claim
-            self.store.add_derivation(self._derivation(existing.id, proposal, score, facts))
+            for d in self._derivations(existing.id, proposal, score, facts):
+                self.store.add_derivation(d)
             self.trust.recompute([existing.id])
             self._anchor()
             return WriteResult(True, [existing.id], verdicts)
         claim = self._make_claim(proposal, score)
         self.store.add_claim(claim)
-        self.store.add_derivation(self._derivation(claim.id, proposal, score, facts))
+        for d in self._derivations(claim.id, proposal, score, facts):
+            self.store.add_derivation(d)
         self.store.set_status(claim.id, Status.ACTIVE.value, "jtms: initial trust",
                               self.trust.claim_trust(claim.id) or 0.0)
         if self.jtms:  # written next to an already-flagged source, or resting on a contested memory: contested
@@ -175,12 +180,46 @@ class LedgerService:
             return None
         return attribute(p, sources, claims)
 
-    def _derivation(self, claim_id: str, p: WriteProposal, score: float,
-                    facts: list[FactSupport] | None = None) -> Derivation:
-        """exposed_to = the whole context; supported_by = the parents of the facts (slide 6), each with the write's s."""
-        parents = p.context_ids if facts is None else [i for i in p.context_ids if any(i in f.parents for f in facts)]
-        return Derivation(_new_id("d_"), claim_id, list(p.context_ids), {cid: score for cid in parents},
-                          agent_id=p.agent_id, facts=facts or [])
+    def _derivations(self, claim_id: str, p: WriteProposal, score: float,
+                     facts: list[FactSupport] | None = None) -> list[Derivation]:
+        """One write -> one derivation per independent way its facts are supported (slides 6-7).
+
+        exposed_to = the whole context; supported_by = one choice of supporter per fact, each with the write's s.
+        Parents that each support a fact on their own are alternatives (OR): the memory holds while any of them is
+        valid, and the JTMS noisy-ORs their trust when their origins are independent. A joint fact needs all its
+        parents (AND). Copies of one text are one supporter, so ten copies of a page count once. Without a verifier
+        (facts is None) every context item is a parent of the single derivation. Per-fact support is stored on the
+        first derivation of the write.
+        """
+        ctx = list(p.context_ids)
+        if facts is None:
+            return [Derivation(_new_id("d_"), claim_id, ctx, {cid: score for cid in ctx}, agent_id=p.agent_id)]
+        combos: list[frozenset[str]] = [frozenset()]
+        for f in facts:
+            options = [frozenset(f.parents)] if f.joint or not f.parents else self._supporters(f)
+            combos = list(dict.fromkeys(c | o for c in combos for o in options))
+            if len(combos) > MAX_JUSTIFICATIONS:
+                combos = sorted(combos, key=self._combo_rank)[:MAX_JUSTIFICATIONS]
+        combos = [c for c in combos if not any(o < c for o in combos)]  # a superset adds no new way to hold
+        combos.sort(key=self._combo_rank)
+        order = {cid: i for i, cid in enumerate(ctx)}
+        return [Derivation(_new_id("d_"), claim_id, ctx, {cid: score for cid in sorted(c, key=order.get)},
+                           agent_id=p.agent_id, facts=list(facts) if i == 0 else [])
+                for i, c in enumerate(combos)]
+
+    def _supporters(self, f: FactSupport) -> list[frozenset[str]]:
+        """A fact's alternative supporters; parents with the same text (copies of one page) are one supporter."""
+        groups: dict[str, set[str]] = {}
+        for pid in f.parents:
+            x = self.store.get_source(pid) or self.store.get_claim(pid)
+            text = x.content if hasattr(x, "content") else getattr(x, "text", pid)
+            groups.setdefault(" ".join(text.lower().split()), set()).add(pid)
+        return [frozenset(g) for g in groups.values()]
+
+    def _combo_rank(self, combo: frozenset[str]) -> tuple:
+        """Strongest first: highest weakest-parent trust, then fewest parents, then ids (deterministic)."""
+        trusts = [t for pid in combo if (t := self.trust._parent_trust(pid)) is not None]
+        return (-min(trusts, default=0.0), len(combo), sorted(combo))
 
     def add_triple(self, claim_id: str, subject: str, property: str, value: str) -> None:
         self.store.add_triple(claim_id, subject, property, value)

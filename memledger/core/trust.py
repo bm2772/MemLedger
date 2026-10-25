@@ -5,7 +5,7 @@ s * min(parent trust); derivations that share an origin source are one group (ma
 noisy-OR'd, so repeating one web page ten times adds nothing); independent groups combine by
 noisy-OR: T = 1 - prod(1 - group value).
 
-Exposure: a claim that saw a flagged source (in exposed_to) without resting on it (not in supported_by) may still
+Exposure: a claim that saw a flagged source (in exposed_to) without resting on it (in no supported_by) may still
 have been steered by it, so it is CONTESTED (reason "exposure: ...", trust unchanged) rather than quarantined; so is a
 claim whose every valid justification rests on an exposure-contested claim. One clean justification keeps it active.
 It is restored when the cause goes (source unflagged, parent cleared), like a JTMS-quarantined claim.
@@ -123,11 +123,12 @@ class TrustEngine:
             return row["status"] == Status.CONTESTED.value and row["reason"].startswith(EXPOSURE)
         return False
 
-    def _exposure(self, d: Derivation) -> str | None:
-        """Why a (valid) derivation is exposed: a flagged source it saw but does not rest on, or an exposure-contested
-        parent claim. None when clean."""
+    def _exposure(self, d: Derivation, supporters: set[str]) -> str | None:
+        """Why a (valid) derivation is exposed: a flagged source it saw that supported none of the claim's facts
+        (`supporters` = every derivation's parents; a supporter that is flagged just invalidates its own derivation,
+        slide 6 D1), or an exposure-contested parent claim. None when clean."""
         for pid in d.exposed_to:
-            if pid not in d.supported_by and (s := self.store.get_source(pid)) is not None and s.flagged:
+            if pid not in supporters and (s := self.store.get_source(pid)) is not None and s.flagged:
                 return f"flagged source {pid}"
         for pid in d.supported_by:
             c = self.store.get_claim(pid)
@@ -139,7 +140,9 @@ class TrustEngine:
         claim = self.store.get_claim(claim_id)
         if claim is None or claim.status in (Status.QUARANTINED, Status.SUPERSEDED):
             return
-        why = [self._exposure(d) for d in self.store.derivations_for(claim_id) if self.is_valid(d)]
+        ders = self.store.derivations_for(claim_id)
+        supporters = {pid for d in ders for pid in d.supported_by}
+        why = [self._exposure(d, supporters) for d in ders if self.is_valid(d)]
         exposed = bool(why) and all(why)
         if exposed and claim.status in (Status.ACTIVE, Status.RESTORED):
             self.store.set_status(claim_id, Status.CONTESTED.value, EXPOSURE + str(why[0]), claim.trust)

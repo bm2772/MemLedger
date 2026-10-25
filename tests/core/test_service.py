@@ -341,3 +341,59 @@ def test_checks_without_a_claims_parameter_still_work():
     c1 = write(svc, "claim", [s1.id])
     write(svc, "claim two", [s1.id, c1])
     assert [x.id for x in chk.seen[-1]] == [s1.id]  # sources only, as before
+
+
+# ---- alternative supporters are OR (slide 6 D1; review of #17): one derivation per independent supporter
+def test_d1_paper_and_web_copy_each_support_the_fact_flagging_the_copy_keeps_it():
+    from memledger.core.factory import build_service
+
+    svc = build_service("full_no_registry")
+    paper = svc.ingest("Drug X lowers blood pressure in adults.", SourceKind.PAPER, ALICE)
+    web = svc.ingest("Drug X lowers blood pressure in adults!", SourceKind.WEB, ALICE)
+    cid = write(svc, "Drug X lowers blood pressure in adults", [paper.id, web.id])
+    ders = svc.store.derivations_for(cid)
+    assert sorted(list(d.supported_by) for d in ders) == sorted([[paper.id], [web.id]])
+    t = {next(iter(d.supported_by)): svc.trust.derivation_trust(d) for d in ders}
+    # independent origins: noisy-OR (was one AND-derivation: min parent trust 0.3 x s = 0.15)
+    assert svc.store.get_claim(cid).trust == pytest.approx(1 - (1 - t[paper.id]) * (1 - t[web.id]))
+    assert svc.store.get_claim(cid).trust > 0.5
+    out = svc.flag_source(web.id, "planted copy")
+    assert out == {"quarantined": [], "restored": [], "contested": []}  # supported by the paper alone: kept
+    assert svc.store.get_claim(cid).status == Status.ACTIVE
+    assert svc.store.get_claim(cid).trust == pytest.approx(t[paper.id])
+    assert svc.flag_source(paper.id, "retracted")["quarantined"] == [cid]
+
+
+def test_copies_of_one_page_count_as_one_supporter():
+    svc = attributing_service()
+    copies = [svc.ingest("Acme account is 1234.", SourceKind.WEB, ALICE) for _ in range(5)]
+    cid = write(svc, "Acme account is 1234.", [c.id for c in copies])
+    (d,) = svc.store.derivations_for(cid)
+    assert set(d.supported_by) == {c.id for c in copies}
+    one = attributing_service()
+    s1 = one.ingest("Acme account is 1234.", SourceKind.WEB, ALICE)
+    assert svc.store.get_claim(cid).trust == pytest.approx(one.store.get_claim(write(one, "Acme account is 1234.",
+                                                                                     [s1.id])).trust)
+
+
+def test_two_facts_with_alternative_supporters_hold_while_each_fact_keeps_one():
+    svc = attributing_service()
+    a1 = svc.ingest("Acme account is 1234.", SourceKind.INTERNAL, ALICE)
+    a2 = svc.ingest("Note: Acme account is 1234 per finance.", SourceKind.USER, ALICE)
+    b1 = svc.ingest("Acme is based in Pune.", SourceKind.INTERNAL, ALICE)
+    cid = write(svc, "Acme account is 1234. Acme is based in Pune.", [a1.id, a2.id, b1.id])
+    ders = svc.store.derivations_for(cid)
+    assert sorted(sorted(d.supported_by) for d in ders) == sorted([sorted([a1.id, b1.id]), sorted([a2.id, b1.id])])
+    assert len(ders[0].facts) == 2 and all(d.facts == [] for d in ders[1:])  # per-fact support stored once
+    assert svc.flag_source(a1.id, "x")["quarantined"] == []  # fact 1 still has a2
+    assert svc.flag_source(b1.id, "x")["quarantined"] == [cid]  # fact 2 had only b1
+
+
+def test_joint_fact_still_needs_all_its_sources():
+    svc = attributing_service()
+    a = svc.ingest("Acme account 1234.", SourceKind.INTERNAL, ALICE)
+    b = svc.ingest("Pune office.", SourceKind.INTERNAL, ALICE)
+    cid = write(svc, "Acme account 1234 Pune office", [a.id, b.id])
+    (d,) = svc.store.derivations_for(cid)
+    assert set(d.supported_by) == {a.id, b.id} and d.facts[0].joint
+    assert svc.flag_source(b.id, "x")["quarantined"] == [cid]

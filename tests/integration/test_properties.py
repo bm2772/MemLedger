@@ -309,11 +309,11 @@ def test_retraction_quarantines_dependents_and_restores_with_new_justification()
 
     # a valid justification arrives later (M2-accepted second source): the retraction is undone, in order
     res = svc.add_justification(a1, [s_good.id], 0.9, "agent")
-    assert res["restored"] == [a1]
-    assert svc.store.get_claim(a3).status == Status.QUARANTINED  # its own derivation still rests on the flagged source
-    assert {a1, a2} <= {h.claim.id for h in svc.retrieve(q, u, k=20)}
-    assert a3 not in {h.claim.id for h in svc.retrieve(q, u, k=20)}
-    assert svc.verify_claim(a1) and svc.verify_claim(a2)
+    # a3 had two alternative supporters (the flagged source, and a1 on its own): a1 is back, so a3 is back (slide 6)
+    assert res["restored"] == [a1, a3]
+    assert sorted(list(d.supported_by) for d in svc.store.derivations_for(a3)) == sorted([[s_bad.id], [a1]])
+    assert {a1, a2, a3} <= {h.claim.id for h in svc.retrieve(q, u, k=20)}
+    assert svc.verify_claim(a1) and svc.verify_claim(a2) and svc.verify_claim(a3)
 
 
 def test_label_tamper_is_detected():
