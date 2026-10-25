@@ -102,3 +102,58 @@ def test_verbatim_shortcut_respects_token_boundaries():
     assert never.check(prop("Acme account 98"), [src("Acme account 9876 is used")]).ok is False
     assert never.check(prop("pay 1,000"), [src("Please pay 1,000,000 today")]).ok is False
     assert never.check(prop("pay 1,000"), [src("Please pay 1,000 today.")]).ok is True
+
+
+# ---- attribution: which context items support which fact (slide 6, supported_by = verifier-confirmed)
+def words_in(doc, fact):
+    """Test scorer: 1.0 when every word of the fact occurs in the document."""
+    return float(set(fact.lower().strip(".").split()) <= set(doc.lower().replace(".", " ").split()))
+
+
+def test_attribute_points_each_fact_to_the_sources_that_support_it():
+    chk = HallucinationCheck(scorer=words_in)
+    a = src("Acme Ltd bank account is 1234.", sid="a")
+    b = src("Acme Ltd is based in Pune.", sid="b")
+    c = src("Lunch menu: rice and dal.", sid="c")
+    p = WriteProposal("Acme Ltd bank account is 1234. Acme Ltd is based in Pune.", ["a", "b", "c"], ALICE)
+    assert chk.check(p, [a, b, c]).ok
+    f1, f2 = chk.attribute(p, [a, b, c])
+    assert (f1.parents, f1.joint) == ({"a": 1.0}, False)
+    assert (f2.parents, f2.joint) == ({"b": 1.0}, False)
+
+
+def test_attribute_multi_source_conclusion_is_joint_over_the_usable_sources():
+    chk = HallucinationCheck(scorer=words_in)
+    a, b = src("Acme account 1234.", sid="a"), src("Pune office.", sid="b")
+    bad = src("Acme account 9999 Pune office.", flagged=True, sid="x")
+    p = WriteProposal("Acme account 1234 Pune office", ["a", "b", "x"], ALICE)
+    assert chk.check(p, [a, b, bad]).ok
+    (f,) = chk.attribute(p, [a, b, bad])
+    assert f.joint and set(f.parents) == {"a", "b"}  # the flagged source supports nothing
+
+
+def test_attribute_counts_memories_and_skips_quarantined_ones():
+    from memledger.core.types import Claim, Status
+
+    chk = HallucinationCheck(scorer=words_in)
+    a = src("Acme account 1234.", sid="a")
+    m = Claim("m1", "Acme is based in Pune.", Labels("team_a"))
+    q = Claim("m2", "Acme is based in Pune.", Labels("team_a"), status=Status.QUARANTINED)
+    p = WriteProposal("Acme is based in Pune.", ["a", "m1", "m2"], ALICE)
+    (f,) = chk.attribute(p, [a], [m, q])
+    assert f.parents == {"m1": 1.0} and not f.joint
+
+
+def test_attribute_reuses_check_scores_for_a_single_source():
+    calls = []
+
+    def counting(doc, fact):
+        calls.append((doc, fact))
+        return lexical_support(doc, fact)
+
+    chk = HallucinationCheck(scorer=counting)
+    s, p = src("Vendor master record: Acme Ltd bank account is 1234."), prop("Acme Ltd bank account is 9876 and big")
+    chk.check(p, [s])
+    n = len(calls)
+    chk.attribute(p, [s])
+    assert len(calls) == n  # the same (document, fact) pairs: no second model call

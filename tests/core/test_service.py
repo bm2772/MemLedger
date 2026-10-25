@@ -6,7 +6,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from memledger.core.merkle import merkle_proof, merkle_root, verify_proof
 from memledger.core.mock import PRIORS
 from memledger.core.service import LedgerService, item_hash
-from memledger.core.types import Session, SourceKind, Verdict, WriteProposal
+from memledger.core.types import Session, SourceKind, Status, Verdict, WriteProposal
 
 ALICE = Session("alice", "a", "researcher", 1)
 BOB = Session("bob", "b", "researcher", 1)
@@ -191,3 +191,54 @@ def test_restored_claim_is_reanchored_and_retrievable(svc):
     assert res["restored"] == [cid]
     assert [m.claim.id for m in svc.retrieve("shared fact", ALICE)] == [cid]
     assert svc.store.get_claim(cid).status.value == "restored"
+
+
+# ---- supported_by = the parents of the facts (attribution by the hallucination check), not the whole context
+def attributing_service():
+    from memledger.guards.hallucination import HallucinationCheck
+
+    def words_in(doc, fact):
+        return float(set(fact.lower().strip(".").split()) <= set(doc.lower().replace(".", " ").split()))
+
+    return LedgerService(checks=[HallucinationCheck(scorer=words_in)])
+
+
+def test_supported_by_holds_only_the_sources_of_the_facts():
+    svc = attributing_service()
+    acct = svc.ingest("Acme account is 1234.", SourceKind.INTERNAL, ALICE)
+    menu = svc.ingest("Lunch menu: rice and dal.", SourceKind.WEB, ALICE)
+    cid = write(svc, "Acme account is 1234.", [acct.id, menu.id])
+    (d,) = svc.store.derivations_for(cid)
+    assert d.exposed_to == [acct.id, menu.id] and list(d.supported_by) == [acct.id]
+    assert [(f.fact, f.parents, f.joint) for f in d.facts] == [("Acme account is 1234.", {acct.id: 1.0}, False)]
+    assert svc.explain(cid)["lineage"][0]["facts"] == [
+        {"fact": "Acme account is 1234.", "parents": {acct.id: 1.0}, "joint": False}]
+
+
+def test_flagging_an_unrelated_context_source_no_longer_retracts():
+    svc = attributing_service()
+    acct = svc.ingest("Acme account is 1234.", SourceKind.INTERNAL, ALICE)
+    menu = svc.ingest("Lunch menu: rice and dal.", SourceKind.WEB, ALICE)
+    cid = write(svc, "Acme account is 1234.", [acct.id, menu.id])
+    assert svc.flag_source(menu.id, "poisoned")["quarantined"] == []
+    assert svc.store.get_claim(cid).status == Status.ACTIVE
+    assert svc.flag_source(acct.id, "poisoned")["quarantined"] == [cid]
+
+
+def test_memory_parents_are_attributed_and_retraction_follows_only_them():
+    svc = attributing_service()
+    pune = svc.ingest("Acme is based in Pune.", SourceKind.INTERNAL, ALICE)
+    acct = svc.ingest("Acme account is 1234.", SourceKind.INTERNAL, ALICE)
+    m_pune, m_acct = write(svc, "Acme is based in Pune.", [pune.id]), write(svc, "Acme account is 1234.", [acct.id])
+    new = write(svc, "Acme is based in Pune", [pune.id, m_pune, m_acct])  # retrieved memories in the context
+    (d,) = svc.store.derivations_for(new)
+    assert list(d.supported_by) == [pune.id, m_pune]  # not the unrelated memory m_acct
+    assert svc.flag_source(acct.id, "poisoned")["quarantined"] == [m_acct]
+    assert svc.store.get_claim(new).status == Status.ACTIVE
+    assert set(svc.flag_source(pune.id, "poisoned")["quarantined"]) == {m_pune, new}
+
+
+def test_without_a_verifier_every_context_item_is_a_parent(svc):
+    s1, s2 = svc.ingest("one", SourceKind.USER, ALICE), svc.ingest("two", SourceKind.WEB, ALICE)
+    (d,) = svc.store.derivations_for(write(svc, "claim", [s1.id, s2.id]))
+    assert list(d.supported_by) == [s1.id, s2.id] and d.facts == []

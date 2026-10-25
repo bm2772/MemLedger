@@ -8,9 +8,19 @@ import sqlite3
 import threading
 from datetime import datetime
 
-from memledger.core.types import Claim, Derivation, Integrity, Labels, Source, SourceKind, Status, now
+from memledger.core.types import (
+    Claim,
+    Derivation,
+    FactSupport,
+    Integrity,
+    Labels,
+    Source,
+    SourceKind,
+    Status,
+    now,
+)
 
-TABLES = ["sources", "claims", "derivations", "edges", "status_log", "hash_log", "triples"]
+TABLES = ["sources", "claims", "derivations", "edges", "fact_support", "status_log", "hash_log", "triples"]
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sources(
@@ -25,6 +35,9 @@ CREATE TABLE IF NOT EXISTS edges(
   id INTEGER PRIMARY KEY AUTOINCREMENT, src TEXT, dst TEXT,
   type TEXT CHECK(type IN ('exposed_to','supported_by','contradicts','supersedes')),
   score REAL, derivation_id TEXT, created_at TEXT);
+CREATE TABLE IF NOT EXISTS fact_support(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, derivation_id TEXT, fact_idx INTEGER, fact TEXT, joint INTEGER,
+  parent TEXT, score REAL);
 CREATE TABLE IF NOT EXISTS status_log(
   seq INTEGER PRIMARY KEY AUTOINCREMENT, entity_id TEXT, status TEXT, trust REAL,
   reason TEXT NOT NULL, at TEXT);
@@ -174,6 +187,11 @@ class SQLiteStore:
             self._edge(pid, d.claim_id, "exposed_to", None, d.id, d.created_at)
         for pid, score in d.supported_by.items():
             self._edge(pid, d.claim_id, "supported_by", score, d.id, d.created_at)
+        for i, f in enumerate(d.facts):  # one row per (fact, parent); a fact without parents keeps one NULL row
+            for pid, score in (f.parents or {None: None}).items():
+                self.conn.execute(
+                    "INSERT INTO fact_support(derivation_id,fact_idx,fact,joint,parent,score) VALUES (?,?,?,?,?,?)",
+                    (d.id, i, f.fact, int(f.joint), pid, score))
         self.conn.commit()
 
     def get_derivation(self, derivation_id: str) -> Derivation | None:
@@ -192,8 +210,16 @@ class SQLiteStore:
             r["id"], r["claim_id"],
             [e["src"] for e in edges if e["type"] == "exposed_to"],
             {e["src"]: e["score"] for e in edges if e["type"] == "supported_by"},
-            r["model"], r["prompt_hash"], r["agent_id"], _dt(r["created_at"]),
+            r["model"], r["prompt_hash"], r["agent_id"], _dt(r["created_at"]), self._facts(r["id"]),
         )
+
+    def _facts(self, derivation_id: str) -> list[FactSupport]:
+        facts: dict[int, FactSupport] = {}
+        for r in self.conn.execute("SELECT * FROM fact_support WHERE derivation_id=? ORDER BY id", (derivation_id,)):
+            f = facts.setdefault(r["fact_idx"], FactSupport(r["fact"], {}, bool(r["joint"])))
+            if r["parent"] is not None:
+                f.parents[r["parent"]] = r["score"]
+        return [facts[i] for i in sorted(facts)]
 
     def _edge(self, src, dst, type_, score, derivation_id, at) -> None:
         self.conn.execute(

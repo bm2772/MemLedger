@@ -14,7 +14,9 @@ If you need a change outside your area, open an issue or ask the owner; do not e
 ## Architecture rules (from the deck — do not violate)
 - The agent never touches storage: every read/write goes through MemoryService.
 - Identity (team, role, clearance) comes from `Session`, never from model output or tool arguments.
-- Provenance edges are recorded by the service: `exposed_to` = everything in the context window; `supported_by` = verifier-confirmed.
+- Provenance edges are recorded by the service: `exposed_to` = everything in the context window; `supported_by` = verifier-confirmed:
+  the parents of each fact (`HallucinationCheck.attribute` -> `Derivation.facts`, table `fact_support`); a fact only the
+  sources together support is `joint` (all of them). Without a verifier (baseline, provenance) every context item.
 - Trust (JTMS): T = s * min(parent trust); noisy-OR only across derivations with disjoint origins; retraction quarantines
   claims with no valid justification left and restores the rest. The JTMS is plain code, no model.
 - Content is append-only; status changes go to an audited log; hash = SHA-256(content || record time || sorted parent hashes);

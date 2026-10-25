@@ -20,6 +20,7 @@ from memledger.core.trust import TrustEngine
 from memledger.core.types import (
     Claim,
     Derivation,
+    FactSupport,
     Labels,
     RetrievedMemory,
     Session,
@@ -133,18 +134,19 @@ class LedgerService:
         if any(not v.ok for v in verdicts):
             return WriteResult(False, [], verdicts)
         score = min((v.score for v in verdicts), default=1.0)
+        facts = self._attribute(proposal, sources)
         team = proposal.session.team
         key = proposal.text.strip().lower()
         existing = next((c for c in self.store.list_claims(team=team)
                          if c.status != Status.QUARANTINED and c.text.strip().lower() == key), None)
         if existing is not None:  # same fact again: one more justification, not a new claim
-            self.store.add_derivation(self._derivation(existing.id, proposal, score))
+            self.store.add_derivation(self._derivation(existing.id, proposal, score, facts))
             self.trust.recompute([existing.id])
             self._anchor()
             return WriteResult(True, [existing.id], verdicts)
         claim = self._make_claim(proposal, score)
         self.store.add_claim(claim)
-        self.store.add_derivation(self._derivation(claim.id, proposal, score))
+        self.store.add_derivation(self._derivation(claim.id, proposal, score, facts))
         self.store.set_status(claim.id, Status.ACTIVE.value, "jtms: initial trust",
                               self.trust.claim_trust(claim.id) or 0.0)
         self.index.add(claim.labels.team, claim.id, claim.text)
@@ -154,9 +156,21 @@ class LedgerService:
         self._anchor()
         return WriteResult(True, [claim.id], verdicts)
 
-    def _derivation(self, claim_id: str, p: WriteProposal, score: float) -> Derivation:
-        return Derivation(_new_id("d_"), claim_id, list(p.context_ids),
-                          {cid: score for cid in p.context_ids}, agent_id=p.agent_id)
+    def _attribute(self, p: WriteProposal, sources: list[Source]) -> list[FactSupport] | None:
+        """Which context items support which fact, from the check that can tell (the hallucination check). None when
+        no check can (baseline, provenance): then every context item is a parent."""
+        attribute = next((a for c in self.checks if callable(a := getattr(c, "attribute", None))), None)
+        if attribute is None:
+            return None
+        claims = [c for i in p.context_ids if (c := self.store.get_claim(i)) is not None]
+        return attribute(p, sources, claims)
+
+    def _derivation(self, claim_id: str, p: WriteProposal, score: float,
+                    facts: list[FactSupport] | None = None) -> Derivation:
+        """exposed_to = the whole context; supported_by = the parents of the facts (slide 6), each with the write's s."""
+        parents = p.context_ids if facts is None else [i for i in p.context_ids if any(i in f.parents for f in facts)]
+        return Derivation(_new_id("d_"), claim_id, list(p.context_ids), {cid: score for cid in parents},
+                          agent_id=p.agent_id, facts=facts or [])
 
     def add_triple(self, claim_id: str, subject: str, property: str, value: str) -> None:
         self.store.add_triple(claim_id, subject, property, value)
@@ -297,7 +311,8 @@ class LedgerService:
         lineage = [
             {"derivation": d.id, "agent_id": d.agent_id,
              "exposed_to": [self._node(p, visited) for p in d.exposed_to],
-             "supported_by": dict(d.supported_by)}
+             "supported_by": dict(d.supported_by),
+             "facts": [{"fact": f.fact, "parents": dict(f.parents), "joint": f.joint} for f in d.facts]}
             for d in self.store.derivations_for(claim_id)
         ]
         return {"claim": claim_id, "text": claim.text, "status": claim.status.value, "trust": claim.trust,
