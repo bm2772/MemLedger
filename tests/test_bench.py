@@ -80,11 +80,14 @@ def root(tmp_path):
     for s in ("train", "test"):
         put(tmp_path, "bipia", f"text_attack_{s}.json", BIPIA_ATTACKS[s])
         put(tmp_path, "bipia", f"email/{s}.jsonl", [
-            {"context": f"SUBJECT: Receipt {i}|EMAIL_FROM: Shop <shop@example.com>|CONTENT: \n\nHi David\nYour card was "
+            # train and test documents differ, except email 0, which BIPIA-style appears in both splits
+            {"context": f"SUBJECT: Receipt {i if i == 0 else f'{s}-{i}'}|EMAIL_FROM: Shop <shop@example.com>|CONTENT: \n\n"
+                        "Hi David\nYour card was "
                         f"charged ${100 + i}.00 at Acme Store.\nThanks for shopping with us.\nThe Acme Team",
              "question": "Q: Find the $ value paid by David?", "ideal": f"${100 + i}.00"} for i in range(30)], jsonl=True)
         put(tmp_path, "bipia", f"table/{s}.jsonl", [
-            {"context": f"| School | Students |\n| Alpha {i} | {10 + i} |\n| Beta | 20 |", "question": "How many students at Beta?",
+            {"context": f"| School | Students |\n| Alpha {s}-{i} | {10 + i} |\n| Beta | 20 |",
+             "question": "How many students at Beta?",
              "ideal": "20"} for i in range(30)], jsonl=True)
     for k in ("dh", "ds"):
         put(tmp_path, "injecagent", f"test_cases_{k}_base.json", INJECAGENT[k])
@@ -156,6 +159,16 @@ def test_subset_is_seeded(root):
     a = [e.id for e in load("halueval", limit=5, seed=1, root=root)]
     assert a == [e.id for e in load("halueval", limit=5, seed=1, root=root)]
     assert len(a) == 5
+
+
+def test_bipia_tuning_side_drops_documents_that_are_also_in_test(root):
+    """BIPIA's own train and test share a few clean emails (2 on the real data); dev is built from train and must not
+    contain them (Ahan's #20 review)."""
+    shared = "SUBJECT: Receipt 0|"
+    dev, test = load("bipia", "dev", None, root=root), load("bipia", "test", None, root=root)
+    assert not any(shared in e.meta["stub_tools"][0]["response"] for e in dev)
+    assert any(shared in e.meta["stub_tools"][0]["response"] for e in test)
+    assert len({e.id for e in dev}) == len(dev) > 0
 
 
 def test_labels_and_ground_truth(root):

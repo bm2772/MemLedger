@@ -155,7 +155,13 @@ def test_one_episode_per_family_flows_through_every_version(version, one_per_fam
 # ----------------------------------------------------------------------------------------------------- 4. splits
 def _keys(eps):
     accounts = {f.get("account") for e in eps for f in e.registry.values() if isinstance(f, dict)} - {None}
-    texts = {s.content or s.text for e in eps if e.meta["part"] == "benchmark" for s in e.steps} - {""}
+    # benchmark content: ingested/written texts and the documents the stub tools return (BIPIA, InjecAgent, AgentDojo
+    # keep theirs there). Task questions are left out: they are our template (bench/loaders.py), so two entries with
+    # the same topic in dev and test ask the same question without sharing any benchmark item.
+    bench = [e for e in eps if e.meta["part"] == "benchmark"]
+    texts = {s.content or s.text for e in bench for s in e.steps if s.op != "task"}
+    texts |= {t["response"] for e in bench for t in e.meta.get("stub_tools", []) if t.get("response")}
+    texts -= {"", None}
     return {"ids": {e.id for e in eps}, "canaries": {c.marker for e in eps for c in e.canaries},
             "accounts": accounts, "benchmark items": texts}
 

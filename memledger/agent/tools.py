@@ -114,6 +114,7 @@ class ToolBox:
         self.outbox: list[dict] = []  # executed high-risk actions (what actually left the system)
         self.stubs: dict[str, StubTool] = {}
         self.ingested: list[Source] = []  # sources created by tool calls (read_web, data stubs), for the eval rows
+        self.ingested_by: dict[str, Session] = {}  # source id -> the session whose tool call fetched it
 
     def register_stub(self, stub: StubTool) -> None:
         """Add an episode-defined tool at run time. The built-in tools keep their meaning (a stub cannot replace one)."""
@@ -150,6 +151,7 @@ class ToolBox:
             return ToolRecord("read_web", args, args, "error", reason="404")
         src = self.memory.ingest(page, SourceKind.WEB, state.session)
         self.ingested.append(src)
+        self.ingested_by[src.id] = state.session
         state.see([src.id])
         if src.flagged:
             return ToolRecord("read_web", args, args, "ok", WITHHELD)
@@ -172,6 +174,7 @@ class ToolBox:
         if stub.response is not None:
             src = self.memory.ingest(stub.response, stub.kind, state.session)
             self.ingested.append(src)
+            self.ingested_by[src.id] = state.session
             state.see([src.id])
             if src.flagged:
                 return ToolRecord(stub.name, args, params, "ok", WITHHELD)
