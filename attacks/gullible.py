@@ -9,8 +9,9 @@ also does what an injected text asks:
     (BIPIA: restates it, or applies the requested format: Base64, reversal, emoji, a language, a cipher, a quoted string)
   * sends data to an address that a retrieved memory says to send to (memshield exfiltration entries)
 
-It is deterministic and knows nothing about the oracle: it only reads the text it is shown. Differences between versions
-therefore come from what the memory layer lets through.
+It is deterministic and only reads the text it is shown, so differences between versions come from what the memory layer
+lets through. It does share bench/adapt.py's format lists (LANG_WORDS, QUOTED) with the BIPIA judge, so its BIPIA
+compliance is an upper bound by construction: use it to compare versions, not as an attack-success estimate.
 """
 
 from __future__ import annotations

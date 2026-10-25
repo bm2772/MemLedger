@@ -15,6 +15,7 @@ import argparse
 import importlib.util
 import json
 import os
+import sys
 from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
@@ -211,7 +212,21 @@ def main(argv: list[str] | None = None) -> dict:
     (d / "families.json").write_text(json.dumps(res, indent=1, default=str) + "\n")
     (d / "families.md").write_text(md + "\n")
     print(md)
+    for line in error_warnings(rows):
+        print(line, file=sys.stderr)
     return summary
+
+
+def error_warnings(rows: dict[str, list[dict]]) -> list[str]:
+    """One loud line per version whose episodes raised: their rows count as no verdict / rejected writes, so a version
+    that failed to load its checkers would otherwise look like one that blocks everything."""
+    out = []
+    for v, rs in rows.items():
+        errs = Counter((r["error"] or "").splitlines()[0][:160] for r in rs if r.get("error"))
+        if errs:
+            top, k = errs.most_common(1)[0]
+            out.append(f"WARNING: {sum(errs.values())}/{len(rs)} episodes errored in {v}; most common ({k}x): {top}")
+    return out
 
 
 if __name__ == "__main__":
