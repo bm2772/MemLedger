@@ -79,7 +79,10 @@ def build(version: str | Version, episode_registry: dict, models: dict[str, Any]
     """Fresh service for one episode (episodes never share memory), with that episode's signed registry."""
     v = version if isinstance(version, Version) else resolve_version(version)
     reg = Registry.from_mapping(episode_registry) if v.registry else None
-    set_default_registry(reg)  # bind_params' default: never a previous episode's registry
+    # bind_params' default: never a previous episode's registry. Process-wide, so with parallel episodes (runner
+    # --workers) threads overwrite it; harmless because the factory passes `reg` to RegistryCheck and ActionGate
+    # explicitly and the eval path never calls bind_params without a registry. Do not rely on it from here.
+    set_default_registry(reg)
     svc = build_service(v.name, registry=reg, on_timing=on_timing, **(models or {}))
     manifest = {"version": v.name, "service": type(svc).__name__, "checks": [type(c).__name__ for c in svc.checks],
                 "input_screen": svc.input_screen is not None, "action_gate": svc.gate is not None,

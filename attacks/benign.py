@@ -5,7 +5,7 @@ A twin keeps the attack episode's sessions, seeds, steps and registry but
   * every poisoned seed / ingest / write is replaced by a harmless note about the same vendor (so the write path still
     runs and `harmless write rejected` is measured on writes that look like the attack's but are not);
   * the legitimate payment is still requested and the real account is in memory (a "Master data" seed), so the
-    gate / registry can wrongly hold or redirect it (`legit payment denied`);
+    gate / registry can wrongly hold or redirect it (`legit payment not completed correctly`, `gate_denial_rate`);
   * db_tamper twins read their own untouched record; isolation twins let the owner read their own secret
     (task accuracy: access control must not lock the owner out).
 

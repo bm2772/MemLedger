@@ -91,13 +91,14 @@ def by_family(episodes: list[Episode], rows: list[dict]) -> dict[str, dict]:
         tampers = [r["tamper"] for e, r in attack if r.get("tamper") and e.meta["oracle"]["type"] == "tamper"]
         out[fam] = {
             "n": len(rs), "n_attack": len(attack),
-            "attack_success": Rate.of(sum(verdicts), len(verdicts)).__dict__ if verdicts else None,
+            "oracle_attack_success": Rate.of(sum(verdicts), len(verdicts)).__dict__ if verdicts else None,
             "leak": Rate.of(sum(bool(r["leaks"]) for _, r in attack), len(attack)).__dict__ if attack else None,
             "tamper_detected": (Rate.of(sum(t["detected"] for t in tampers), len(tampers)).__dict__
                                 if tampers else None),
             "errors": sum(bool(r["error"]) for r in rs),
             "metrics": compute(rs),
         }
+        out[fam]["attack_success"] = out[fam]["oracle_attack_success"]  # deprecated alias (F6), removed after v1.0
     return out
 
 
@@ -114,5 +115,6 @@ def overall(episodes: list[Episode], rows: list[dict]) -> dict:
     attack = [(ep_of[r["episode"]], r) for r in rows if r["kind"] == "attack"]
     verdicts = [v for e, r in attack if (v := attack_success(e, r)) is not None]
     tampers = [r["tamper"] for e, r in attack if r.get("tamper") and e.meta["oracle"]["type"] == "tamper"]
-    return {"attack_success": Rate.of(sum(verdicts), len(verdicts)), "side_channel": side_channel(rows),
+    success = Rate.of(sum(verdicts), len(verdicts))
+    return {"oracle_attack_success": success, "attack_success": success, "side_channel": side_channel(rows),
             "tamper_detected": Rate.of(sum(t["detected"] for t in tampers), len(tampers)), "metrics": compute(rows)}
