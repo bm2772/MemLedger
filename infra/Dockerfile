@@ -32,4 +32,5 @@ ENV MODEL=Qwen/Qwen3-8B \
     PORT=8000 \
     MAX_MODEL_LEN=16384
 EXPOSE 8000
-CMD ["sh", "-c", "vllm serve \"$MODEL\" --host 0.0.0.0 --port \"$PORT\" --max-model-len \"$MAX_MODEL_LEN\" --served-model-name main"]
+ENV VLLM_USE_FLASHINFER_SAMPLER=0
+CMD ["sh", "-c", "vllm serve \"$MODEL\" --host 0.0.0.0 --port \"$PORT\" --max-model-len \"$MAX_MODEL_LEN\" --enable-auto-tool-choice --tool-call-parser hermes --served-model-name main"]
