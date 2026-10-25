@@ -1,8 +1,9 @@
 """Step 2: hallucination check (slides 11, 13). A memory is hallucinated when its own sources do not support it.
 
 The proposal is split into single facts; each is scored by a grounding model (MiniCheck or AlignScore; injectable)
-against the text of the sources the model was shown, all sources together so multi-source conclusions can pass.
-Long source text is checked in overlapping chunks and the best chunk counts. Flagged sources support nothing.
+against the text of the sources and parent memories the model was shown (a memory may be grounded on earlier
+memories, slide 7), all together so multi-source conclusions can pass. Long text is checked in overlapping chunks and
+the best chunk counts. Flagged sources and quarantined, contested or superseded memories ground nothing.
 A fact that appears verbatim in the sources on token boundaries (whitespace-normalised, e.g. a copied code snippet;
 "98" never matches inside "9876", nor "1,000" inside "1,000,000") scores 1.0 without the model: MiniCheck rejected an
 identical code snippet in the stress test. Verdict.score = the weakest fact's support, which the service uses as s in
@@ -10,15 +11,18 @@ T = s * min parent trust (slide 7).
 
 attribute() then says which context items support which fact of an accepted memory: a parent (source or memory)
 supports a fact when it does so on its own (verbatim, or its best chunk reaches the threshold). A fact no single
-parent supports passed on the sources together, so all of them support it (joint). The service records these as
+parent supports passed on the parents together, so all of them support it (joint). The service records these as
 supported_by, so retraction and trust follow the parents of the facts, not everything that was in the context.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 
 from memledger.core.types import Claim, FactSupport, Source, Status, Verdict, WriteProposal
+
+GROUNDING = frozenset({Status.ACTIVE, Status.RESTORED})  # memories that may ground a new one
 from memledger.guards.models import PairScorer, default_support_scorer
 from memledger.guards.text import chunks, normalise, split_facts
 
@@ -50,18 +54,24 @@ class HallucinationCheck:
     def score_fact(self, fact: str, docs: list[str]) -> float:
         return max((self._score(d, fact) for d in docs), default=0.0)
 
-    def check(self, proposal: WriteProposal, sources: list[Source]) -> Verdict:
+    @staticmethod
+    def _parents(sources: list[Source], claims: Sequence[Claim]) -> tuple[dict[str, str], dict[str, str]]:
+        """({source id: text}, {memory id: text}) of the context items that may ground or support a memory."""
+        return ({s.id: s.content for s in sources if not s.flagged and s.content.strip()},
+                {c.id: c.text for c in claims if c.status in GROUNDING and c.text.strip()})
+
+    def check(self, proposal: WriteProposal, sources: list[Source], claims: Sequence[Claim] = ()) -> Verdict:
         self._memo = {}
         facts = split_facts(proposal.text)
         if not facts:
             return Verdict(False, 0.0, "empty proposal", self.name)
-        usable = [s for s in sources if not s.flagged and s.content.strip()]
+        usable = [t for d in self._parents(sources, claims) for t in d.values()]
         if not usable:
             if self.allow_unsupported:
                 return Verdict(True, 0.0, "no sources: kept as model knowledge with zero support", self.name)
-            return Verdict(False, 0.0, "no unflagged sources to support it", self.name)
-        docs = chunks("\n\n".join(s.content for s in usable), self.chunk_words, self.chunk_words // 4)
-        full = _squash("\n".join(s.content for s in usable))
+            return Verdict(False, 0.0, "no unflagged sources or usable memories to support it", self.name)
+        docs = chunks("\n\n".join(usable), self.chunk_words, self.chunk_words // 4)
+        full = _squash("\n".join(usable))
         if _verbatim(_squash(proposal.text), full):
             return Verdict(True, 1.0, "copied verbatim from its sources", self.name)
         scored = [(f, 1.0 if _verbatim(_squash(f), full) else self.score_fact(f, docs)) for f in facts]
@@ -72,11 +82,12 @@ class HallucinationCheck:
             return Verdict(False, worst, f"unsupported by its sources: {detail}", self.name)
         return Verdict(True, worst, f"{len(facts)} fact(s) supported (min {worst:.2f})", self.name)
 
-    def attribute(self, proposal: WriteProposal, sources: list[Source], claims: list[Claim] = ()) -> list[FactSupport]:
+    def attribute(self, proposal: WriteProposal, sources: list[Source],
+                  claims: Sequence[Claim] = ()) -> list[FactSupport]:
         """Per fact of an accepted proposal, the parents that support it (see the module docstring). Flagged sources
-        and quarantined memories support nothing."""
-        usable = {s.id: s.content for s in sources if not s.flagged and s.content.strip()}
-        parents = {**usable, **{c.id: c.text for c in claims if c.status != Status.QUARANTINED and c.text.strip()}}
+        and quarantined, contested or superseded memories support nothing."""
+        srcs, mems = self._parents(sources, claims)
+        parents = {**srcs, **mems}
         squashed = {pid: _squash(text) for pid, text in parents.items()}
         out = []
         for fact in split_facts(proposal.text):
@@ -84,6 +95,6 @@ class HallucinationCheck:
             scores = {pid: 1.0 if _verbatim(sq, squashed[pid]) else self.score_fact(
                 fact, chunks(text, self.chunk_words, self.chunk_words // 4)) for pid, text in parents.items()}
             own = {pid: sc for pid, sc in scores.items() if sc >= self.threshold}
-            joint = not own and bool(usable)
-            out.append(FactSupport(fact, own or {pid: scores[pid] for pid in usable}, joint))
+            joint = not own and bool(parents)
+            out.append(FactSupport(fact, own or scores, joint))
         return out

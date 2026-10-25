@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import threading
 import time
 import uuid
@@ -130,11 +131,12 @@ class LedgerService:
 
     def _propose_write(self, proposal: WriteProposal) -> WriteResult:
         sources = [s for i in proposal.context_ids if (s := self.store.get_source(i)) is not None]
-        verdicts = [c.check(proposal, sources) for c in self.checks]
+        claims = [c for i in proposal.context_ids if (c := self.store.get_claim(i)) is not None]
+        verdicts = [self._run_check(c, proposal, sources, claims) for c in self.checks]
         if any(not v.ok for v in verdicts):
             return WriteResult(False, [], verdicts)
         score = min((v.score for v in verdicts), default=1.0)
-        facts = self._attribute(proposal, sources)
+        facts = self._attribute(proposal, sources, claims)
         team = proposal.session.team
         key = proposal.text.strip().lower()
         existing = next((c for c in self.store.list_claims(team=team)
@@ -149,6 +151,8 @@ class LedgerService:
         self.store.add_derivation(self._derivation(claim.id, proposal, score, facts))
         self.store.set_status(claim.id, Status.ACTIVE.value, "jtms: initial trust",
                               self.trust.claim_trust(claim.id) or 0.0)
+        if self.jtms:  # written next to an already-flagged source, or resting on a contested memory: contested
+            self.trust.recompute([claim.id])
         self.index.add(claim.labels.team, claim.id, claim.text)
         for c in self.checks:  # step 4: conflicts the contradiction check found are recorded as edges
             for conflict in getattr(c, "last_conflicts", []):
@@ -156,13 +160,19 @@ class LedgerService:
         self._anchor()
         return WriteResult(True, [claim.id], verdicts)
 
-    def _attribute(self, p: WriteProposal, sources: list[Source]) -> list[FactSupport] | None:
+    @staticmethod
+    def _run_check(check: Check, p: WriteProposal, sources: list[Source], claims: list[Claim]) -> Verdict:
+        """Parent memories go only to checks that take them (`claims` parameter, e.g. the hallucination check)."""
+        if "claims" in inspect.signature(check.check).parameters:
+            return check.check(p, sources, claims=claims)
+        return check.check(p, sources)
+
+    def _attribute(self, p: WriteProposal, sources: list[Source], claims: list[Claim]) -> list[FactSupport] | None:
         """Which context items support which fact, from the check that can tell (the hallucination check). None when
         no check can (baseline, provenance): then every context item is a parent."""
         attribute = next((a for c in self.checks if callable(a := getattr(c, "attribute", None))), None)
         if attribute is None:
             return None
-        claims = [c for i in p.context_ids if (c := self.store.get_claim(i)) is not None]
         return attribute(p, sources, claims)
 
     def _derivation(self, claim_id: str, p: WriteProposal, score: float,
@@ -282,12 +292,21 @@ class LedgerService:
             self._timed("gate", t0)
 
     def flag_source(self, source_id: str, reason: str) -> dict[str, list[str]]:
+        """Retract: claims resting on the source are quarantined (JTMS); claims that only saw it are contested."""
         self.store.flag_source(source_id, reason)
+        return self._recompute_all()
+
+    def unflag_source(self, source_id: str, reason: str) -> dict[str, list[str]]:
+        """Undo a flag (false alarm): the JTMS restores what it quarantined and exposure-contested claims are restored."""
+        self.store.unflag_source(source_id, reason)
+        return self._recompute_all()
+
+    def _recompute_all(self) -> dict[str, list[str]]:
         if not self.jtms:  # plain memory has no dependency graph to retract through
-            return {"quarantined": [], "restored": []}
+            return {"quarantined": [], "restored": [], "contested": []}
         res = self.trust.recompute()
         self._anchor()
-        return {"quarantined": res["quarantined"], "restored": res["restored"]}
+        return {"quarantined": res["quarantined"], "restored": res["restored"], "contested": res["contested"]}
 
     def add_justification(self, claim_id: str, context_ids: list[str], score: float = 1.0,
                           agent_id: str = "") -> dict[str, list[str]]:

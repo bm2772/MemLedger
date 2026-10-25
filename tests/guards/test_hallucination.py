@@ -157,3 +157,29 @@ def test_attribute_reuses_check_scores_for_a_single_source():
     n = len(calls)
     chk.attribute(p, [s])
     assert len(calls) == n  # the same (document, fact) pairs: no second model call
+
+
+# ---- grounding on parent memories (slide 7: memories derived from memories)
+@pytest.mark.parametrize("status,ok", [("active", True), ("restored", True), ("quarantined", False),
+                                       ("contested", False), ("superseded", False)])
+def test_check_grounds_on_usable_parent_memories_only(status, ok):
+    from memledger.core.types import Claim, Status
+
+    m = Claim("m1", "Acme is based in Pune.", Labels("team_a"), status=Status(status))
+    p = WriteProposal("Acme is based in Pune", ["m1"], ALICE)
+    v = HallucinationCheck(scorer=words_in).check(p, [], [m])
+    assert v.ok is ok
+    if not ok:
+        assert v.reason == "no unflagged sources or usable memories to support it"
+
+
+def test_check_combines_sources_and_memories():
+    from memledger.core.types import Claim
+
+    chk = HallucinationCheck(scorer=words_in)
+    a = src("Acme account 1234.", sid="a")
+    m = Claim("m1", "Pune office.", Labels("team_a"))
+    p = WriteProposal("Acme account 1234 Pune office", ["a", "m1"], ALICE)
+    assert not chk.check(p, [a]).ok and chk.check(p, [a], [m]).ok
+    (f,) = chk.attribute(p, [a], [m])
+    assert f.joint and set(f.parents) == {"a", "m1"}

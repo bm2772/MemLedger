@@ -4,6 +4,11 @@ A claim holds if at least one derivation (justification) is valid. Each derivati
 s * min(parent trust); derivations that share an origin source are one group (max, never
 noisy-OR'd, so repeating one web page ten times adds nothing); independent groups combine by
 noisy-OR: T = 1 - prod(1 - group value).
+
+Exposure: a claim that saw a flagged source (in exposed_to) without resting on it (not in supported_by) may still
+have been steered by it, so it is CONTESTED (reason "exposure: ...", trust unchanged) rather than quarantined; so is a
+claim whose every valid justification rests on an exposure-contested claim. One clean justification keeps it active.
+It is restored when the cause goes (source unflagged, parent cleared), like a JTMS-quarantined claim.
 """
 
 from __future__ import annotations
@@ -13,6 +18,7 @@ from memledger.core.types import Derivation, SourceKind, Status
 from memledger.store.sqlite import SQLiteStore
 
 EPS = 1e-9
+EXPOSURE = "exposure: "  # status reason prefix of exposure-contested claims (vs. contradiction-contested)
 
 
 class TrustEngine:
@@ -109,6 +115,39 @@ class TrustEngine:
             visit(cid, frozenset())
         return order
 
+    def exposure_contested(self, claim_id: str) -> bool:
+        """The claim's current CONTESTED status was set by exposure (not by a contradiction)."""
+        for row in reversed(self.store.status_history(claim_id)):
+            if row["reason"] == "jtms: trust recomputed":  # trust-only update, status carried over
+                continue
+            return row["status"] == Status.CONTESTED.value and row["reason"].startswith(EXPOSURE)
+        return False
+
+    def _exposure(self, d: Derivation) -> str | None:
+        """Why a (valid) derivation is exposed: a flagged source it saw but does not rest on, or an exposure-contested
+        parent claim. None when clean."""
+        for pid in d.exposed_to:
+            if pid not in d.supported_by and (s := self.store.get_source(pid)) is not None and s.flagged:
+                return f"flagged source {pid}"
+        for pid in d.supported_by:
+            c = self.store.get_claim(pid)
+            if c is not None and c.status == Status.CONTESTED and self.exposure_contested(pid):
+                return f"rests on contested memory {pid}"
+        return None
+
+    def _update_exposure(self, claim_id: str, res: dict[str, list[str]]) -> None:
+        claim = self.store.get_claim(claim_id)
+        if claim is None or claim.status in (Status.QUARANTINED, Status.SUPERSEDED):
+            return
+        why = [self._exposure(d) for d in self.store.derivations_for(claim_id) if self.is_valid(d)]
+        exposed = bool(why) and all(why)
+        if exposed and claim.status in (Status.ACTIVE, Status.RESTORED):
+            self.store.set_status(claim_id, Status.CONTESTED.value, EXPOSURE + str(why[0]), claim.trust)
+            res["contested"].append(claim_id)
+        elif not exposed and self.exposure_contested(claim_id):
+            self.store.set_status(claim_id, Status.RESTORED.value, EXPOSURE + "cleared", claim.trust)
+            res["restored"].append(claim_id)
+
     def _jtms_quarantined(self, claim_id: str) -> bool:
         for row in reversed(self.store.status_history(claim_id)):
             if row["status"] == Status.QUARANTINED.value:
@@ -117,7 +156,7 @@ class TrustEngine:
 
     def recompute(self, claim_ids: list[str] | None = None) -> dict[str, list[str]]:
         ids = claim_ids if claim_ids is not None else [c.id for c in self.store.list_claims()]
-        res: dict[str, list[str]] = {"quarantined": [], "restored": [], "updated": []}
+        res: dict[str, list[str]] = {"quarantined": [], "restored": [], "contested": [], "updated": []}
         for cid in self._topo(ids):
             claim = self.store.get_claim(cid)
             if claim is None:
@@ -135,6 +174,7 @@ class TrustEngine:
             elif abs(t - claim.trust) > EPS:
                 self.store.set_status(cid, claim.status.value, "jtms: trust recomputed", t)
                 res["updated"].append(cid)
+            self._update_exposure(cid, res)  # in dependency order, so parents are settled first
         return res
 
     # ---- contradictions

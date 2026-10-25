@@ -129,7 +129,7 @@ def test_flag_source_quarantines_dependents(svc):
     dep = write(svc, "dependent fact", [s1.id])
     other = write(svc, "other fact", [s2.id])
     out = svc.flag_source(s1.id, "poisoned")
-    assert out == {"quarantined": [dep], "restored": []}
+    assert out == {"quarantined": [dep], "restored": [], "contested": []}
     assert svc.store.get_claim(dep).status.value == "quarantined"
     assert svc.store.get_source(s1.id).flagged
     assert svc.retrieve("dependent", ALICE) == []
@@ -215,14 +215,93 @@ def test_supported_by_holds_only_the_sources_of_the_facts():
         {"fact": "Acme account is 1234.", "parents": {acct.id: 1.0}, "joint": False}]
 
 
-def test_flagging_an_unrelated_context_source_no_longer_retracts():
+def contested_by_exposure(svc, cid):
+    c = svc.store.get_claim(cid)
+    return c.status == Status.CONTESTED and svc.store.status_history(cid)[-1]["reason"].startswith("exposure: ")
+
+
+def test_exposed_only_memory_is_contested_with_trust_unchanged():
     svc = attributing_service()
     acct = svc.ingest("Acme account is 1234.", SourceKind.INTERNAL, ALICE)
     menu = svc.ingest("Lunch menu: rice and dal.", SourceKind.WEB, ALICE)
     cid = write(svc, "Acme account is 1234.", [acct.id, menu.id])
-    assert svc.flag_source(menu.id, "poisoned")["quarantined"] == []
-    assert svc.store.get_claim(cid).status == Status.ACTIVE
-    assert svc.flag_source(acct.id, "poisoned")["quarantined"] == [cid]
+    before = svc.store.get_claim(cid).trust
+    assert svc.flag_source(menu.id, "poisoned") == {"quarantined": [], "restored": [], "contested": [cid]}
+    assert contested_by_exposure(svc, cid) and svc.store.get_claim(cid).trust == before
+    assert svc.store.status_history(cid)[-1]["reason"] == f"exposure: flagged source {menu.id}"
+
+
+def test_source_in_supported_by_still_quarantines():
+    svc = attributing_service()
+    acct = svc.ingest("Acme account is 1234.", SourceKind.INTERNAL, ALICE)
+    menu = svc.ingest("Lunch menu: rice and dal.", SourceKind.WEB, ALICE)
+    cid = write(svc, "Acme account is 1234.", [acct.id, menu.id])
+    assert svc.flag_source(acct.id, "poisoned") == {"quarantined": [cid], "restored": [], "contested": []}
+    assert svc.store.get_claim(cid).status == Status.QUARANTINED
+
+
+def test_unflagging_restores_contested_and_quarantined_memories():
+    svc = attributing_service()
+    acct = svc.ingest("Acme account is 1234.", SourceKind.INTERNAL, ALICE)
+    menu = svc.ingest("Lunch menu: rice and dal.", SourceKind.WEB, ALICE)
+    cid = write(svc, "Acme account is 1234.", [acct.id, menu.id])
+    svc.flag_source(menu.id, "poisoned")
+    assert svc.unflag_source(menu.id, "false alarm") == {"quarantined": [], "restored": [cid], "contested": []}
+    assert svc.store.get_claim(cid).status == Status.RESTORED
+    svc.flag_source(acct.id, "poisoned")
+    assert svc.unflag_source(acct.id, "false alarm")["restored"] == [cid]
+
+
+def test_contradiction_contested_memory_is_not_restored_by_unflagging():
+    svc = attributing_service()
+    acct = svc.ingest("Acme account is 1234.", SourceKind.INTERNAL, ALICE)
+    menu = svc.ingest("Lunch menu: rice and dal.", SourceKind.WEB, ALICE)
+    cid = write(svc, "Acme account is 1234.", [acct.id, menu.id])
+    svc.store.set_status(cid, Status.CONTESTED.value, "contradicted by higher-trust c_x")
+    assert svc.flag_source(menu.id, "poisoned")["contested"] == []  # already contested, reason kept
+    assert svc.unflag_source(menu.id, "false alarm")["restored"] == []
+    assert svc.store.get_claim(cid).status == Status.CONTESTED
+
+
+def test_memory_written_next_to_an_already_flagged_source_is_contested_at_birth():
+    svc = attributing_service()
+    acct = svc.ingest("Acme account is 1234.", SourceKind.INTERNAL, ALICE)
+    menu = svc.ingest("Lunch menu: rice and dal.", SourceKind.WEB, ALICE)
+    svc.flag_source(menu.id, "screened")
+    cid = write(svc, "Acme account is 1234.", [acct.id, menu.id])
+    assert contested_by_exposure(svc, cid)
+
+
+def test_contest_spreads_down_the_chain_only_when_it_is_the_only_support():
+    svc = attributing_service()
+    pune = svc.ingest("Acme is based in Pune.", SourceKind.INTERNAL, ALICE)
+    pune2 = svc.ingest("Acme is based in Pune and Mumbai.", SourceKind.INTERNAL, ALICE)
+    menu = svc.ingest("Lunch menu: rice and dal.", SourceKind.WEB, ALICE)
+    parent = write(svc, "Acme is based in Pune.", [pune.id, menu.id])
+    only_via_parent = write(svc, "Acme is based in Pune", [parent])  # grounded on the memory alone
+    also_clean = write(svc, "Acme is in Pune", [parent])
+    write(svc, "Acme is in Pune", [pune2.id])  # a second, clean justification
+    out = svc.flag_source(menu.id, "poisoned")
+    assert out["contested"] == [parent, only_via_parent] and out["quarantined"] == []
+    assert contested_by_exposure(svc, only_via_parent)
+    assert svc.store.get_claim(also_clean).status == Status.ACTIVE
+    assert svc.store.status_history(only_via_parent)[-1]["reason"] == f"exposure: rests on contested memory {parent}"
+    assert set(svc.unflag_source(menu.id, "false alarm")["restored"]) == {parent, only_via_parent}
+
+
+def test_gate_does_not_count_a_contested_memory_as_trusted_context():
+    from memledger.core.factory import build_service
+
+    svc = build_service("full_no_registry")
+    reg = svc.ingest("Vendor master: Acme account is 1234.", SourceKind.REGISTRY, ALICE)
+    menu = svc.ingest("Lunch menu: rice and dal.", SourceKind.INTERNAL, ALICE)
+    cid = write(svc, "Acme account is 1234.", [reg.id, menu.id])
+    pay = {"vendor": "Acme", "account": "1234", "amount": 10}
+    assert svc.authorize("pay_invoice", pay, [cid], ALICE).ok
+    svc.flag_source(menu.id, "poisoned")
+    assert svc.store.get_claim(cid).status == Status.CONTESTED
+    v = svc.authorize("pay_invoice", pay, [cid], ALICE)
+    assert not v.ok and "contested" in v.reason
 
 
 def test_memory_parents_are_attributed_and_retraction_follows_only_them():
@@ -242,3 +321,23 @@ def test_without_a_verifier_every_context_item_is_a_parent(svc):
     s1, s2 = svc.ingest("one", SourceKind.USER, ALICE), svc.ingest("two", SourceKind.WEB, ALICE)
     (d,) = svc.store.derivations_for(write(svc, "claim", [s1.id, s2.id]))
     assert list(d.supported_by) == [s1.id, s2.id] and d.facts == []
+
+
+def test_memory_grounded_only_on_a_memory_is_accepted_and_retracted_with_it():
+    svc = attributing_service()
+    pune = svc.ingest("Acme is based in Pune.", SourceKind.INTERNAL, ALICE)
+    parent = write(svc, "Acme is based in Pune.", [pune.id])
+    child = write(svc, "Acme is based in Pune", [parent])  # no source in the context: grounded on the memory
+    assert list(svc.store.derivations_for(child)[0].supported_by) == [parent]
+    assert set(svc.flag_source(pune.id, "poisoned")["quarantined"]) == {parent, child}
+    res = svc.propose_write(WriteProposal("Acme is in Pune", [parent], ALICE, "ag"))  # quarantined: grounds nothing
+    assert not res.accepted
+
+
+def test_checks_without_a_claims_parameter_still_work():
+    chk = FakeCheck(ok=True, score=0.9)
+    svc = LedgerService(checks=[chk])
+    s1 = svc.ingest("one", SourceKind.USER, ALICE)
+    c1 = write(svc, "claim", [s1.id])
+    write(svc, "claim two", [s1.id, c1])
+    assert [x.id for x in chk.seen[-1]] == [s1.id]  # sources only, as before

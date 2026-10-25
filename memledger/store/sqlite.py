@@ -266,6 +266,9 @@ class SQLiteStore:
     def flag_source(self, source_id: str, reason: str) -> None:
         self.set_status(source_id, "flagged", reason)
 
+    def unflag_source(self, source_id: str, reason: str) -> None:
+        self.set_status(source_id, "cleared", reason)
+
     # ---- hash log
     def append_hash_log(self, root: str, signature: bytes, n_items: int) -> int:
         cur = self.conn.execute(
