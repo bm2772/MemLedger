@@ -4,10 +4,11 @@ The proposal is split into single facts; each is scored by a grounding model (Mi
 against the text of the sources and parent memories the model was shown (a memory may be grounded on earlier
 memories, slide 7), all together so multi-source conclusions can pass. Long text is checked in overlapping chunks and
 the best chunk counts. Flagged sources and quarantined, contested or superseded memories ground nothing.
-A fact that appears verbatim in the sources on token boundaries (whitespace-normalised, e.g. a copied code snippet;
-"98" never matches inside "9876", nor "1,000" inside "1,000,000") scores 1.0 without the model: MiniCheck rejected an
-identical code snippet in the stress test. Verdict.score = the weakest fact's support, which the service uses as s in
-T = s * min parent trust (slide 7).
+A proposal or fact that appears in its sources as whole sentence(s) or whole line(s) (whitespace-normalised, e.g. a
+copied code snippet) scores 1.0 without the model: MiniCheck rejected an identical code snippet in the stress test.
+A clause inside a longer sentence does not count ("It is false that X", "Scammers claim X" do not support X; nor
+does "98" inside "9876"): those go to the model. Verdict.score = the weakest fact's support, which the service uses
+as s in T = s * min parent trust (slide 7).
 
 attribute() then says which context items support which fact of an accepted memory: a parent (source or memory)
 supports a fact when it does so on its own (verbatim, or its best chunk reaches the threshold). A fact no single
@@ -26,13 +27,23 @@ GROUNDING = frozenset({Status.ACTIVE, Status.RESTORED})  # memories that may gro
 from memledger.guards.models import PairScorer, default_support_scorer
 from memledger.guards.text import chunks, normalise, split_facts
 
+_START = r"(?:\A|(?<=\n)|(?<=[.!?;:] ))"  # text or line start, or right after a sentence end / label colon
+_END = r"[.!?;]?(?=\n|\Z)|[.!?;](?= )"  # line or text end, or a sentence end
+
 
 def _verbatim(needle: str, haystack: str) -> bool:
-    return bool(needle) and re.search(r"(?<![\w.,])" + re.escape(needle) + r"(?![\w]|[.,]\d)", haystack) is not None
+    """needle occurs in haystack as whole sentence(s) or whole line(s), across line breaks (both via _squash)."""
+    tokens = needle.rstrip(".!?;").split()
+    if not tokens:
+        return False
+    body = r"[ \n]".join(re.escape(t) for t in tokens)
+    return re.search(_START + body + r"(?:" + _END + r")", haystack) is not None
 
 
 def _squash(text: str) -> str:
-    return " ".join(normalise(text).split()).lower()
+    """Lower-cased, NFKC, whitespace collapsed within lines; line breaks kept (they bound sentences and code lines)."""
+    lines = (" ".join(line.split()) for line in normalise(text).lower().splitlines())
+    return "\n".join(line for line in lines if line)
 
 
 class HallucinationCheck:
