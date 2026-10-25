@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from memledger.agent.loop import Agent
 from memledger.agent.tools import ToolBox
 from memledger.core.types import Labels, Session, SourceKind, Status, WriteProposal
+from memledger.policy.access import AccessControl
 from web import samples
 from web.auth import DEMO_USERS, Auth, Unauthorized, session_dict
 from web.workspace import VERSIONS, Workspace, Workspaces
@@ -117,8 +118,11 @@ def _plain(row: dict) -> dict:
     return {k: (v.hex() if isinstance(v, bytes) else v) for k, v in row.items()}
 
 
+_READ = AccessControl()  # the deck's read rule incl. role policies (e.g. guests see shared only), in every version
+
+
 def visible(labels: Labels, s: Session) -> bool:
-    return labels.team in (s.team, "shared") and labels.confidentiality <= s.clearance
+    return _READ.can_read(s, labels)
 
 
 # ---------------------------------------------------------------------------------------------------------- app
@@ -313,9 +317,17 @@ def create_app(data_dir: str | Path | None = None, auth: Auth | None = None,
                 src = ws.store.get_source(sid)
                 if src is None or not visible(src.labels, s):
                     raise HTTPException(404, f"no source {sid!r}")
-            out = ws.service.add_justification(claim_id, body.source_ids, agent_id=f"console:{s.user_id}")
-            ws.log(s, "evidence", claim=claim_id, sources=body.source_ids)
-            return {"quarantined": list(out.get("quarantined", [])), "restored": list(out.get("restored", []))}
+            before = {c.id: c.status for c in ws.store.list_claims()}
+            res = ws.service.propose_justification(
+                claim_id, WriteProposal("", body.source_ids, s, f"console:{s.user_id}"))
+            ws.log(s, "evidence", claim=claim_id, sources=body.source_ids, accepted=res.accepted)
+            if not res.accepted:
+                raise HTTPException(400, "; ".join(v.reason for v in res.verdicts if not v.ok) or "evidence refused")
+            after = {c.id: c.status for c in ws.store.list_claims()}
+            changed = [i for i in after if after[i] != before.get(i)]
+            return {"quarantined": [i for i in changed if after[i] == Status.QUARANTINED],
+                    "restored": [i for i in changed if after[i] == Status.RESTORED],
+                    "verdicts": [verdict_dict(v) for v in res.verdicts]}
 
     @app.post("/api/workspaces/{ws_id}/recall")
     def recall(ws: WS, body: Recall, s: Me):

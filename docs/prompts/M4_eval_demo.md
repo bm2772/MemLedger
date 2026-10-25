@@ -27,3 +27,6 @@ traceability table. demo/app.py (Streamlit): the slide 5 Acme scenario side by s
 
 ## Day 6 (27 Oct)
 Test M3's area (agent, bench, attacks, scenarios) against the checklist; update numbers for the slides; v1.0 sign-off.
+
+## Next (24 Oct)
+See docs/prompts/NEXT_STEPS_2026-10-24.md — it supersedes the remaining days above where they differ.

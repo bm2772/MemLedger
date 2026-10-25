@@ -24,7 +24,8 @@ from attacks.oracle import attack_success
 from memledger.agent.episode import Episode
 
 CHECK_NAMES = {"hallucination": "hallucination check", "memshield": "memshield", "contradiction": "contradiction / trust",
-               "registry": "registry match", "access": "access check (write)", "input_screen": "input screen"}
+               "registry": "registry match", "access": "access check (write)", "input_screen": "input screen",
+               "team_scope": "team scoping", "jtms": "JTMS retraction", "provenance": "hash verification"}
 ORDER = ["hash verification", "input screen", "hallucination check", "memshield", "contradiction / trust",
          "registry match", "access check (write)", "JTMS retraction", "registry binding", "action gate", "read filter", "team scoping",
          "none fired"]

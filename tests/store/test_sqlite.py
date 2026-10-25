@@ -81,10 +81,10 @@ def test_append_only(st, table):
     st.add_source(mk_source())
     st.add_claim(mk_claim())
     st.add_derivation(Derivation("d1", "c1", ["s1"], {}, created_at=T0, facts=[FactSupport("f", {"s1": 0.9})]))
-    st.append_hash_log("r", b"sig", 1)
+    st.append_hash_log("r", b"sig", 1, {"s1": "leaf"})
     st.add_triple("c1", "x", "p", "v")
     col = {"sources": "kind", "claims": "text", "derivations": "model", "edges": "type", "fact_support": "fact",
-           "status_log": "reason", "hash_log": "root", "triples": "value"}[table]
+           "status_log": "reason", "hash_log": "root", "anchored": "leaf", "triples": "value"}[table]
     with pytest.raises(sqlite3.DatabaseError, match="append-only"):
         st.conn.execute(f"UPDATE {table} SET {col}={col}")
     with pytest.raises(sqlite3.DatabaseError, match="append-only"):

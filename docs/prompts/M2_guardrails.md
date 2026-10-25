@@ -31,3 +31,6 @@ input screen; never InjecAgent/AgentDojo). Integration freeze 18:00.
 ## Day 5–6 (26–27 Oct)
 Calibrate fact-checker scores (held-out data), fix bugs. On 27 Oct test M1's area (core/store/retrieval) against the
 checklist and file issues.
+
+## Next (24 Oct)
+See docs/prompts/NEXT_STEPS_2026-10-24.md — it supersedes the remaining days above where they differ.

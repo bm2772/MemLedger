@@ -120,7 +120,7 @@ On the generated files (`make suite`; dev 860, test 935 episodes; manifest in `d
 | F-M3-2 | Scenario attacks (fake_fact, cross_team, clearance) and benchmark attacks had no `meta["oracle"]`; the fallback graded them "defended" whenever no tool call matched | `attacks/suite.py` default oracles; new `blocked` oracle kind in `attacks/oracle.py` |
 | F-M3-3 | `memledger.egg-info/` tracked | untracked, `.gitignore` |
 | F-M3-4 | `make setup` re-created `.venv` with another Python over an existing one (mixed site-packages); vLLM in `[models]` broke Mac installs; model fetch pulled ONNX/OpenVINO copies (5.9 GB for one model) | `m3/setup-final`: guarded venv creation, `vllm; sys_platform == 'linux'`, PyTorch-only allow patterns |
-| F-M3-5 | memshield fine-tuning on Apple MPS diverges (NaN loss, predicts all clean) | `--cpu` (Makefile passes it on macOS) |
+| F-M3-5 | memshield fine-tuning diverged (NaN loss, predicts all clean). First blamed on Apple MPS; the real cause is transformers 5 loading deberta-v3-base in fp16 (Adam NaNs on CPU too) | float32 load in `train_memshield.py`; `make memshield` trains on MPS in ~9 min (docs/results/memshield.md). Superseded: `--cpu` is not needed (~18 h) |
 | F-M3-6 | `memledger/agent/llm.py` defaulted to llama3.1:8b while everything else uses qwen3:8b | default qwen3:8b; for qwen3 use `eval.llm.MeteredLLM` (thinking off) |
 
 ## Findings for other owners

@@ -115,8 +115,20 @@ class Workspace:
                       datetime.now(UTC))
         self.registry_doc = sign_entries([*self.registry_entries(), entry], self.registry_key, session)
         self._write_json("registry.json", self.registry_doc)
-        self.service = self._build()
+        self._swap_registry()
         return entry
+
+    def _swap_registry(self) -> None:
+        """Point the running service's registry check and action gate at the new signed registry. The service is not
+        rebuilt: that would drop session taint (I3/I4) and the approval queue, i.e. clear taint without a person."""
+        if self.version != "full":
+            return
+        reg = self.registry
+        for c in self.service.checks:
+            if type(c).__name__ == "RegistryCheck":
+                c.registry = reg
+        if self.service.gate is not None and getattr(self.service.gate, "registry", None) is not None:
+            self.service.gate.registry = reg
 
     def set_web_page(self, url: str, content: str) -> None:
         self.meta.setdefault("web_pages", {})[url] = content

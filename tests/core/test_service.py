@@ -5,7 +5,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from memledger.core.merkle import merkle_proof, merkle_root, verify_proof
 from memledger.core.mock import PRIORS
-from memledger.core.service import LedgerService, item_hash
+from memledger.core.service import LedgerService, item_hash, leaf_of
 from memledger.core.types import Session, SourceKind, Status, Verdict, WriteProposal
 
 ALICE = Session("alice", "a", "researcher", 1)
@@ -105,10 +105,10 @@ def test_hash_log_grows_and_signatures_verify():
 def test_anchor_root_matches_merkle(svc):
     s = svc.ingest("one", SourceKind.USER, ALICE)
     cid = write(svc, "claim", [s.id])
-    hashes = [s.content_hash, svc.store.get_claim(cid).content_hash]
+    leaves = [leaf_of(s.id, s.content_hash), leaf_of(cid, svc.store.get_claim(cid).content_hash)]
     root = svc.store.latest_root()["root"]
-    assert root == merkle_root(hashes)
-    assert verify_proof(hashes[1], merkle_proof(hashes, hashes[1]), root)
+    assert root == merkle_root(leaves)
+    assert verify_proof(leaves[1], merkle_proof(leaves, leaves[1]), root)
 
 
 def test_explain_nested_lineage(svc):

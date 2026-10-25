@@ -15,10 +15,18 @@ def test_empty_root():
 
 def test_single_leaf_root_is_leaf_hash():
     h = hs(1)[0]
-    assert merkle_root([h]) == hashlib.sha256(bytes.fromhex(h)).hexdigest()
+    assert merkle_root([h]) == hashlib.sha256(b"\x00" + bytes.fromhex(h)).hexdigest()
 
 
-@pytest.mark.parametrize("n", [1, 2, 3, 5])
+def test_duplicated_last_leaf_does_not_share_a_root():
+    """CVE-2012-2459 pattern: an odd level must not duplicate its last node."""
+    a, b, c, d = hs(4)
+    assert merkle_root([a, b, c]) != merkle_root([a, b, c, d])
+    assert merkle_root([a, b, c]) == merkle_root([a, b, c, c])  # a set: duplicates are one leaf
+    assert merkle_root([a, b]) != merkle_root([b]) and merkle_root([a]) != a
+
+
+@pytest.mark.parametrize("n", [1, 2, 3, 5, 6, 7, 9])
 def test_proofs_verify_for_all_leaves(n):
     leaves = hs(n)
     root = merkle_root(leaves)
