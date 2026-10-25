@@ -300,3 +300,26 @@ def test_a_cut_off_raw_file_is_played_again_and_rows_are_written_atomically(tmp_
     llm = GullibleLLM()
     run(episodes, ["baseline"], tmp_path, "r", llm, backend="lexical", resume=True)
     assert "is not readable" in capsys.readouterr().out and llm.meter.calls > 0
+
+
+def test_episodes_without_llm_calls_do_not_reset_the_error_streak(tmp_path):
+    """Omkaar's #19 re-review: scripted episodes succeed while the LLM is down and used to reset the streak (the smoke
+    fixture finished with 3/8 errored)."""
+    with pytest.raises(SystemExit, match="3 episodes in a row errored"):
+        run(list(eps().values()), ["baseline"], tmp_path, "r", DeadLLM(), backend="lexical", max_consecutive_errors=3)
+
+
+def test_summary_names_the_checker_that_actually_loaded(monkeypatch):
+    """Omkaar's #19 re-review: checkers load lazily, so a Prompt Guard 2 -> ProtectAI fallback happens after the start."""
+    from eval import runner
+
+    class LazyScreen:
+        model_id = "meta-llama/Llama-Prompt-Guard-2-86M"
+
+        def __call__(self, text):
+            self.model_id = "protectai/deberta-v3-base-prompt-injection-v2"  # gated: the fallback loaded
+            return 0.0
+
+    monkeypatch.setattr(runner, "load_guard_models", lambda backend: {"injection": LazyScreen()})
+    out = run(list(eps().values()), ["full"], None, "g", GullibleLLM(), backend="lexical")
+    assert out["guard_models"] == {"injection": "protectai/deberta-v3-base-prompt-injection-v2"}

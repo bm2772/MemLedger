@@ -267,7 +267,10 @@ def _play(episodes: list[Episode], v: Version, llm, models: dict, backend: str, 
             if progress:
                 print(f"[{v.name} {done}/{len(episodes)}] {episodes[i].id} {row['wall_s']:.1f}s"
                       f"{' ERROR ' + row['error'] if row['error'] else ''}", flush=True)
-            streak = streak + 1 if row["error"] else 0
+            if row["error"]:
+                streak += 1
+            elif row["llm"]["calls"]:  # an episode without LLM calls says nothing about the LLM server (#19 review)
+                streak = 0
             if max_consecutive_errors and streak >= max_consecutive_errors:
                 pool.shutdown(wait=False, cancel_futures=True)
                 raise SystemExit(f"stopping: {streak} episodes in a row errored in {v.name} (last: {row['error']}); "
@@ -293,7 +296,7 @@ def run(episodes: list[Episode], versions: list[str], out_dir: str | Path | None
         progress: bool = False, workers: int = 1, resume: bool = False, max_consecutive_errors: int = 20) -> dict:
     llm = llm or GullibleLLM()
     backend = backend or guard_backend()
-    models = load_guard_models(backend)
+    models = loaded = load_guard_models(backend)
     fingerprint = _fingerprint(llm, backend, models, episodes, split, episodes_label)
     if workers > 1:
         lock = threading.Lock()
@@ -344,6 +347,9 @@ def run(episodes: list[Episode], versions: list[str], out_dir: str | Path | None
     if "baseline" in all_rows:
         for name, rows in all_rows.items():
             summary["metrics"][name]["accuracy_loss"] = accuracy_loss(all_rows["baseline"], rows)
+    # the checkers load lazily: read their names again now, so a fallback (Prompt Guard 2 -> ProtectAI) is what the
+    # summary says ran (the fingerprint keeps the names known at the start, which is what --resume compares)
+    summary["guard_models"] = _model_names(loaded)
     if out_dir is not None:
         d = Path(out_dir) / run_id
         d.mkdir(parents=True, exist_ok=True)
