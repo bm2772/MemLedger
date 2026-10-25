@@ -1,6 +1,6 @@
 """docs/results.md from runner summaries (slides 18-19 reporting; TEAM_PLAN final checklist).
 
-    python -m eval.report results/<run_id>/summary.json [--out docs/results.md]
+    python -m eval.report results/<run_id>/summary.json [--out docs/results.md] [--latency <1-worker summary.json>]
 
 Tables per version with 95% Wilson intervals (rule-of-three bound when nothing happened), accuracy loss with a paired
 bootstrap interval, and a traceability table mapping each slide claim to a test or a measured number.
@@ -78,8 +78,11 @@ def _status(goal: str, m: dict, version: str, key: str) -> str:
     return "met" if base and base["p"] is not None and r["p"] < base["p"] else "not met"
 
 
-def render(summary: dict) -> str:
+def render(summary: dict, latency: dict | None = None) -> str:
+    """`latency`: the summary of a 1-worker run (make eval-latency). With parallel episodes the main run's write/read
+    ms and s/episode include thread contention (`latency_valid` false), so they are taken from `latency` or omitted."""
     m = summary["metrics"]
+    lat = latency["metrics"] if latency else (m if summary.get("latency_valid", True) else None)
     prelim = summary.get("llm") == "fake-gullible" or summary.get("guard_backend") == "lexical"
     out = ["# MemLedger results", ""]
     if prelim:
@@ -100,10 +103,18 @@ def render(summary: dict) -> str:
     for v, x in m.items():
         loss = x.get("accuracy_loss")
         loss_s = "–" if not loss else f"{loss['diff']:+.1%} [{loss['lo']:+.1%}, {loss['hi']:+.1%}] (n={loss['n']})"
-        wall = x["wall_s"]["mean"]
-        out.append(f"| {v} | " + " | ".join(_rate(x.get(k)) for k, _ in COST) + f" | {loss_s} | {_ms(x['write_ms'])} | "
-                   f"{_ms(x['read_ms'])} | {'–' if wall is None else f'{wall:.2f}'} | {x['llm']['calls']} | "
+        t = (lat or {}).get(v)
+        wall = t["wall_s"]["mean"] if t else None
+        write_s, read_s = (_ms(t["write_ms"]), _ms(t["read_ms"])) if t else ("n/a", "n/a")
+        out.append(f"| {v} | " + " | ".join(_rate(x.get(k)) for k, _ in COST) + f" | {loss_s} | {write_s} | "
+                   f"{read_s} | {'–' if wall is None else f'{wall:.2f}'} | {x['llm']['calls']} | "
                    f"{x['llm']['prompt_tokens']} / {x['llm']['completion_tokens']} |")
+    if latency:
+        out += ["", (f"Write/read ms and s/episode from run `{latency['run_id']}` ({latency.get('workers', 1)} worker, "
+                     f"n = {latency.get('n_episodes', '?')} per version); everything else from `{summary['run_id']}`.")]
+    elif lat is None:
+        out += ["", (f"Write/read ms and s/episode: n/a, run `{summary['run_id']}` played {summary.get('workers')} "
+                     "episodes in parallel (thread contention); report them from a 1-worker run (--latency).")]
     out += ["", "Errors per version: " + ", ".join(f"{v} {_rate(x['error_rate'])}" for v, x in m.items()), "",
             "## Slide claims → evidence", "", "| slide | claim | evidence | status |", "|---|---|---|---|"]
     for slide, claim, ev in CLAIMS:
@@ -126,8 +137,10 @@ def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("summary")
     ap.add_argument("--out", default="docs/results.md")
+    ap.add_argument("--latency", help="summary.json of a 1-worker run (make eval-latency) for the ms columns")
     a = ap.parse_args(argv)
-    Path(a.out).write_text(render(json.loads(Path(a.summary).read_text())))
+    latency = json.loads(Path(a.latency).read_text()) if a.latency else None
+    Path(a.out).write_text(render(json.loads(Path(a.summary).read_text()), latency))
     print(f"wrote {a.out}")
 
 
