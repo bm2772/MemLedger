@@ -44,6 +44,11 @@ FILES: dict[str, dict[str, str]] = {
 AGGREFACT_ROWS = "https://datasets-server.huggingface.co/rows?dataset=lytang/LLM-AggreFact&config=default"
 AGGREFACT_MAX_ROWS = 3000  # per split, sampled at evenly spaced offsets so every sub-dataset is represented
 NAMES = [*FILES, "llm_aggrefact", "agentdojo"]
+LICENSES = {  # as published by each dataset's authors; check before redistributing anything derived from them
+    "longmemeval": "MIT", "locomo": "CC BY-NC 4.0", "bipia": "MIT (qa/abstract sets excluded)",
+    "injecagent": "MIT", "memshield": "see npow/memshield-bench card", "memevobench": "see GitHub repo",
+    "ragtruth": "MIT", "halueval": "MIT", "llm_aggrefact": "CC BY 4.0 (gated)", "agentdojo": "MIT",
+}
 
 
 def data_dir(name: str = "", root: str | Path | None = None) -> Path:
@@ -124,9 +129,12 @@ def main(argv: list[str] | None = None) -> None:
         if n not in NAMES:
             raise SystemExit(f"unknown dataset {n!r}; choose from {NAMES}")
         try:
-            print(f"{n}: {download(n)}")
-        except (RuntimeError, OSError) as e:
+            path = download(n)
+        except (RuntimeError, OSError) as e:  # offline or gated: keep going
             print(f"{n}: skipped ({e})", file=sys.stderr)
+            continue
+        size = sum(f.stat().st_size for f in path.rglob("*") if f.is_file()) if path.exists() else 0
+        print(f"{n}: {size / 1e6:.1f} MB at {path} (licence: {LICENSES.get(n, '?')})")
 
 
 if __name__ == "__main__":

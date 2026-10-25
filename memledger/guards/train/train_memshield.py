@@ -1,11 +1,13 @@
 """Fine-tune DeBERTa-v3-base on memshield-bench (npow/memshield-bench) as the write-time memory screen (slide 11).
 
-    pip install -e '.[models]' datasets
+    pip install -e '.[models]'
     python -m memledger.guards.train.train_memshield --out models/memshield --epochs 2
+    python -m memledger.guards.train.train_memshield --data-dir data/memshield   # local copy (bench.download)
     export MEMLEDGER_MEMSHIELD_MODEL=models/memshield
 
-Trains on the dataset's train split only and reports precision/recall/F1 on its test split (written to
-<out>/test_metrics.json; copy the numbers into results, not the weights). models/ is gitignored: never commit
+Trains on the dataset's train split only, uses its validation split (when present) to keep the best epoch and stop
+early, and reports precision/recall/F1 on its test split (written to <out>/test_metrics.json; copy the numbers into
+results, not the weights). models/ is gitignored: never commit
 weights. Run on a Brev GPU and log the hours in infra/budget.csv.
 """
 
@@ -48,6 +50,9 @@ def binary_metrics(y_true: list[int], y_pred: list[int]) -> dict[str, float]:
 def main(argv: list[str] | None = None) -> int:  # pragma: no cover - needs GPU, datasets and model downloads
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--dataset", default="npow/memshield-bench")
+    ap.add_argument("--data-dir", help="read <dir>/{train,validation,test}.jsonl instead of the Hub dataset")
+    ap.add_argument("--patience", type=int, default=1, help="epochs without validation-F1 gain before stopping")
+    ap.add_argument("--cpu", action="store_true", help="train on CPU (DeBERTa-v3 gives NaN losses on Apple MPS)")
     ap.add_argument("--base", default="microsoft/deberta-v3-base")
     ap.add_argument("--out", default="models/memshield")
     ap.add_argument("--epochs", type=float, default=2)
@@ -65,11 +70,17 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - needs GPU,
         AutoModelForSequenceClassification,
         AutoTokenizer,
         DataCollatorWithPadding,
+        EarlyStoppingCallback,
         Trainer,
         TrainingArguments,
     )
 
-    ds = load_dataset(a.dataset)
+    if a.data_dir:
+        files = {s: str(Path(a.data_dir) / f"{s}.jsonl") for s in ("train", "validation", "test")
+                 if (Path(a.data_dir) / f"{s}.jsonl").exists()}
+        ds = load_dataset("json", data_files=files)
+    else:
+        ds = load_dataset(a.dataset)
     if "train" not in ds or "test" not in ds:
         raise SystemExit(f"{a.dataset} needs train and test splits, has {list(ds)}")
     text_col, label_col = detect_columns(ds["train"].column_names, a.text_col, a.label_col)
@@ -82,20 +93,32 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - needs GPU,
 
     train = ds["train"].map(prep, batched=True, remove_columns=ds["train"].column_names)
     test = ds["test"].map(prep, batched=True, remove_columns=ds["test"].column_names)
+    val = (ds["validation"].map(prep, batched=True, remove_columns=ds["validation"].column_names)
+           if "validation" in ds else None)
+
+    def val_metrics(p) -> dict:
+        return binary_metrics(list(p.label_ids), list(np.argmax(p.predictions, axis=-1)))
+
     model = AutoModelForSequenceClassification.from_pretrained(
         a.base, num_labels=2, id2label={0: "CLEAN", 1: "POISONED"}, label2id={"CLEAN": 0, "POISONED": 1})
+    per_epoch = "epoch" if val is not None else "no"  # validation picks the best epoch; test is never looked at
     args = TrainingArguments(output_dir=f"{a.out}/checkpoints", num_train_epochs=a.epochs, learning_rate=a.lr,
                              per_device_train_batch_size=a.batch, per_device_eval_batch_size=a.batch,
-                             seed=a.seed, save_strategy="no", report_to=[])
-    trainer = Trainer(model=model, args=args, train_dataset=train, data_collator=DataCollatorWithPadding(tok))
+                             seed=a.seed, eval_strategy=per_epoch, save_strategy=per_epoch, save_total_limit=1,
+                             load_best_model_at_end=val is not None, metric_for_best_model="f1", report_to=[],
+                             use_cpu=a.cpu)
+    trainer = Trainer(model=model, args=args, train_dataset=train, eval_dataset=val,
+                      data_collator=DataCollatorWithPadding(tok), compute_metrics=val_metrics,
+                      callbacks=[EarlyStoppingCallback(a.patience)] if val is not None else [])
     trainer.train()
     pred = trainer.predict(test)
     metrics = binary_metrics(list(pred.label_ids), list(np.argmax(pred.predictions, axis=-1)))
     Path(a.out).mkdir(parents=True, exist_ok=True)
     trainer.save_model(a.out)
     tok.save_pretrained(a.out)
-    (Path(a.out) / "test_metrics.json").write_text(json.dumps({**metrics, "dataset": a.dataset, "base": a.base,
-                                                                "split": "test"}, indent=2))
+    (Path(a.out) / "test_metrics.json").write_text(json.dumps({**metrics, "dataset": a.data_dir or a.dataset,
+                                                                "base": a.base, "split": "test",
+                                                                "epochs_run": trainer.state.epoch}, indent=2))
     print(json.dumps(metrics, indent=2))
     return 0
 
