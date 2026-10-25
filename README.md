@@ -15,6 +15,7 @@ with a signed hash chain. It ships with an evaluation suite comparing five versi
 ```bash
 make setup   # creates .venv and installs dev deps (enough for tests; see Reproduce for real runs)
 make test
+make web     # the MemLedger console on http://127.0.0.1:8000 (web/README.md)
 ```
 
 ## Reproduce
@@ -45,4 +46,4 @@ The final test run uses `--split test` once, after all tuning on dev is finished
 
 ## Layout
 `memledger/` core, store, retrieval (M1) · guards, policy, registry (M2) · agent (M3) — `bench/ attacks/ scenarios/` (M3)
-— `eval/ demo/ infra/` (M4) — `tests/` — `docs/`
+— `eval/ demo/ infra/` (M4) — `web/` console (M3) — `tests/` — `docs/`
