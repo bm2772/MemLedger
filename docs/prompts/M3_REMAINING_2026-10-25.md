@@ -63,6 +63,25 @@ Do not edit demo/; list findings for M4, at least:
 - a 3-minute scripted demo path and a screen recording as fallback.
 ```
 
+## 4. Stress-test renames (M3 with M4) — branch `m3/renames`, before the Brev run (Sun 26 Oct 12:00)
+From docs/testing/stress_test_report.md on integration/v1. Branch from `integration/v1`.
+```
+F1 "Legit payment denied" is mislabelled: on versions without the registry the payment runs, to account `unknown`,
+   because scenarios/generator.py:174-179 puts the vendor's account only in the registry. Pick one (agree with
+   Omkaar/M4): (a) rename the metric to "legit payment not completed correctly" (eval/metrics.py:84,97) and report
+   gate denials as a separate metric; or (b) seed a vendor record in team memory so plain memory can pay (changes
+   the suite hash: rebuild data and say so in the PR). Add a test that a clean payment on baseline is counted under
+   the right name.
+F6 Two metrics are both called "attack success": summary.json `attack_success_rate` (hijacked payment/email only)
+   vs families.json `attack_success` (per-family oracle). Rename them, e.g. `hijacked_action_rate` and
+   `oracle_attack_success`, everywhere: eval/metrics.py, eval/report.py, families.md, demo Results tab, and
+   docs/results.md. Keep the old keys readable for one release if the demo reads them.
+MemEvoBench transfer of memshield (recall 0.21, 22/160 false rejections): decide whether MemEvoBench dev goes into
+   memshield training (then retrain and keep MemEvoBench test held out) or is reported separately as an
+   out-of-distribution result. Write the decision in the PR.
+make test + make lint green; push; give Banaj the compare link.
+```
+
 ## Deadlines
-1, 2 and the memshield fine-tune (see M3_attacks_data.md) by Sun 26 Oct 12:00 (M4 then runs the final Brev test on a reproducible setup); 3 by Sun 26 Oct 18:00.
+1, 2 and the memshield fine-tune (see M3_attacks_data.md) by Sun 26 Oct 12:00 (M4 then runs the final Brev test on a reproducible setup); 3 by Sun 26 Oct 18:00; 4 by Sun 26 Oct 12:00.
 Mon 27 Oct: test M2's area (guards/policy/registry) per docs/TEAM_PLAN.md.
