@@ -87,6 +87,36 @@ def select_seed(results: list[dict]) -> dict:
                                        r["calibration"]["f1"]))
 
 
+def training_kwargs(a: argparse.Namespace, seed: int, n_train: int, output_dir: str) -> dict:
+    """TrainingArguments keywords for one seed, checked against the installed transformers (so a mismatch fails in
+    seconds, not after setup on a GPU). Warm-up is given in steps: transformers 5 removed warmup_ratio."""
+    import inspect
+
+    import transformers
+
+    steps = math.ceil(n_train / max(1, a.batch * a.grad_accum)) * a.epochs
+    kw: dict = {"output_dir": output_dir, "num_train_epochs": a.epochs, "learning_rate": a.lr,
+                "per_device_train_batch_size": a.batch, "per_device_eval_batch_size": a.batch,
+                "gradient_accumulation_steps": a.grad_accum, "use_cpu": a.cpu, "seed": seed,
+                "warmup_steps": int(a.warmup_ratio * steps), "weight_decay": a.weight_decay, "report_to": [],
+                "logging_steps": 10}
+    if a.best_epoch:  # evaluate each epoch on validation, keep the best (lowest loss)
+        kw |= {"eval_strategy": "epoch", "save_strategy": "epoch", "save_total_limit": 1,
+               "load_best_model_at_end": True, "metric_for_best_model": "eval_loss", "greater_is_better": False}
+    else:
+        kw["save_strategy"] = "no"
+    known = inspect.signature(transformers.TrainingArguments.__init__).parameters
+    if missing := [k for k in kw if k not in known]:
+        raise SystemExit(f"transformers {transformers.__version__} has no TrainingArguments {missing}")
+    return kw
+
+
+def training_args(a: argparse.Namespace, seed: int, n_train: int, output_dir: str):
+    import transformers
+
+    return transformers.TrainingArguments(**training_kwargs(a, seed, n_train, output_dir))
+
+
 def to_binary(v: object) -> int:
     """Labels may be bools, ints or strings such as 'poisoned'/'clean'."""
     if isinstance(v, str):
@@ -162,7 +192,6 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - needs GPU,
         AutoTokenizer,
         DataCollatorWithPadding,
         Trainer,
-        TrainingArguments,
     )
 
     if a.data:
@@ -225,14 +254,7 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - needs GPU,
         model = AutoModelForSequenceClassification.from_pretrained(
             a.base, dtype=torch.float32, num_labels=2, id2label={0: "CLEAN", 1: "POISONED"},
             label2id={"CLEAN": 0, "POISONED": 1})
-        args = TrainingArguments(
-            output_dir=f"{a.out}/checkpoints-{seed}", num_train_epochs=a.epochs, learning_rate=a.lr,
-            per_device_train_batch_size=a.batch, per_device_eval_batch_size=a.batch,
-            gradient_accumulation_steps=a.grad_accum, use_cpu=a.cpu, seed=seed, warmup_ratio=a.warmup_ratio,
-            weight_decay=a.weight_decay, report_to=[], logging_steps=10,
-            eval_strategy="epoch" if a.best_epoch else "no", save_strategy="epoch" if a.best_epoch else "no",
-            save_total_limit=1 if a.best_epoch else None, load_best_model_at_end=a.best_epoch,
-            metric_for_best_model="eval_loss" if a.best_epoch else None, greater_is_better=False if a.best_epoch else None)
+        args = training_args(a, seed, len(train), f"{a.out}/checkpoints-{seed}")
         trainer = WeightedTrainer(model=model, args=args, train_dataset=train, eval_dataset=val if a.best_epoch else None,
                                   data_collator=DataCollatorWithPadding(tok))
         trainer.train()
