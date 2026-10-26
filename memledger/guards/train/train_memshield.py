@@ -63,8 +63,10 @@ def memevo_rows(root: str | Path | None = None, split: str = "dev",
 
 
 def suite_dev_writes() -> tuple[list[str], list[int]]:
-    """Write texts of the suite's DEV scenario episodes (generated worlds, no benchmarks) with their poison label: the
-    memory types the agent runs see (benign twins, repetition, poisonedrag ...). For calibration only; never test."""
+    """HARMLESS write texts of the suite's DEV scenario episodes (generated worlds, no benchmarks): the memory types the
+    agent runs see (benign twins, repetition, poisonedrag ...), as calibration negatives only, so the threshold keeps
+    false rejections low on them. Their poisoned writes are left out: most are attacks other checks stop (registry,
+    hallucination, gate), and counting them as misses made calibration recall meaningless (0.05). Never test."""
     from attacks.suite import SuiteConfig, build
 
     def writes(split: str) -> dict[str, int]:
@@ -76,8 +78,8 @@ def suite_dev_writes() -> tuple[list[str], list[int]]:
         return out
 
     dev, test = writes("dev"), writes("test")
-    kept = {t: y for t, y in dev.items() if t not in test}  # a text the test episodes also write stays out
-    return list(kept), list(kept.values())
+    kept = [t for t, y in dev.items() if t not in test and y == 0]  # harmless only; texts test also writes stay out
+    return kept, [0] * len(kept)
 
 
 def select_seed(results: list[dict]) -> dict:
