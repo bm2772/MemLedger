@@ -184,6 +184,10 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - needs GPU,
                     help="choose threshold and seed on memshield validation + a held-out third of MemEvoBench dev + "
                          "the suite's dev scenario writes (with --add-memevobench-dev, training keeps two thirds)")
     a = ap.parse_args(argv)
+    out = Path(a.out)
+    if out.is_dir() and any(out.iterdir()) and not (out / "config.json").exists() \
+            and not all(p.name == "best_seed" or p.name.startswith("checkpoints-") for p in out.iterdir()):
+        raise SystemExit(f"--out {out} is not empty and not a model directory; it is cleared before saving")
 
     import shutil
 
@@ -270,12 +274,15 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - needs GPU,
             return [int(x) for x in pred.label_ids], p
 
         yc, pc = scores(calib)
-        threshold = pick_threshold(yc, pc, a.max_fpr, a.min_threshold)
-        r = {"seed": seed, "threshold": threshold,
+        fitted = pick_threshold(yc, pc, a.max_fpr)
+        threshold = max(fitted, a.min_threshold)
+        r = {"seed": seed, "threshold": threshold, "floored": fitted < a.min_threshold,
              "calibration": {**binary_metrics(yc, [int(p >= threshold) for p in pc]),
                              "false_rejection": fpr(yc, pc, threshold)}}
         results.append(r)
         print(f"seed {seed}: threshold {threshold:.3f}, calibration {json.dumps(r['calibration'])}", flush=True)
+        if r["floored"]:  # the floor, not the data, set it: this seed is badly calibrated
+            print(f"seed {seed}: fitted threshold {fitted:.3f} is below the floor {a.min_threshold}", flush=True)
         if best is None or select_seed([best, r]) is r:
             best = r
             shutil.rmtree(best_dir, ignore_errors=True)
@@ -295,8 +302,11 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - needs GPU,
     metrics = binary_metrics(yt, [int(p >= threshold) for p in pt])
     at_half = binary_metrics(yt, [int(p >= 0.5) for p in pt])
     val_m = binary_metrics(yv, [int(p >= threshold) for p in pv])
+    for f in out.iterdir():  # files of an earlier model (e.g. pytorch_model.bin) must not outlive it
+        if f != best_dir:
+            shutil.rmtree(f) if f.is_dir() else f.unlink()
     for f in best_dir.iterdir():  # the chosen seed becomes the model in --out
-        shutil.move(str(f), Path(a.out) / f.name)
+        shutil.move(str(f), out / f.name)
     best_dir.rmdir()
     settings = {k: getattr(a, k) for k in ("dataset", "data", "base", "epochs", "lr", "batch", "grad_accum",
                                            "max_length", "seed", "seeds", "warmup_ratio", "weight_decay",
