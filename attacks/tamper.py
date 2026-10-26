@@ -116,7 +116,8 @@ class TamperingService:
                                         else "other: " + "; ".join(sorted(reasons)))
         return {"kind": self.spec["kind"], "victims": len(self.victims), "returned": len(returned),
                 "quarantined": len(quarantined), "detected": detected, "detected_by": by,
-                "retargeted": getattr(self, "retargeted", False)}
+                "retargeted": getattr(self, "retargeted", False),
+                "carried_out": bool(self.victims)}  # False: the write checks stored no seed, nothing to tamper with
 
 
 class ProbeService:
