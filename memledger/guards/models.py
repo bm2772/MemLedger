@@ -22,7 +22,10 @@ NLIModel = Callable[[str, str], dict[str, float]]  # (premise, hypothesis) -> {e
 TextClassifier = Callable[[str], float]  # text -> P(positive class: injected / manipulative)
 
 MINICHECK = "lytang/MiniCheck-RoBERTa-Large"
-NLI = "cross-encoder/nli-deberta-v3-base"
+# DeBERTa-v3-large NLI (MNLI, FEVER, ANLI, LingNLI, WANLI): on the 26 Oct Brev test run it removed all 15 harmless
+# writes the base cross-encoder rejected as contradictions, with no change in attacks stopped. Override with
+# $MEMLEDGER_NLI_MODEL (e.g. cross-encoder/nli-deberta-v3-base for the smaller model).
+NLI = "MoritzLaurer/DeBERTa-v3-large-mnli-fever-anli-ling-wanli"
 PROMPT_GUARD = "meta-llama/Llama-Prompt-Guard-2-86M"
 PROTECTAI = "protectai/deberta-v3-base-prompt-injection-v2"  # ungated fallback when Prompt Guard 2 cannot load
 
