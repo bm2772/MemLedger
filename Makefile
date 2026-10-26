@@ -29,8 +29,12 @@ memshield:  # fine-tune the write-time memory screen on memshield TRAIN (thresho
 	.venv/bin/python -m memledger.guards.train.train_memshield --data data/memshield --out $(MEMSHIELD_DIR) \
 		--epochs 3 --lr 2e-5 --batch 2 --grad-accum 8 --max-length 384
 memshield-large:  # Brev GPU: DeBERTa-v3-large + MemEvoBench dev memories (its test items held out) -> models/memshield-large
+	# large models are seed-sensitive (26 Oct: thresholds 0.822 and 0.022 from one recipe): 5 seeds, warm-up, best epoch,
+	# threshold and seed chosen on dev calibration data (memshield validation + MemEvoBench dev held-out + suite dev
+	# writes), never below 0.5
 	.venv/bin/python -m memledger.guards.train.train_memshield --data data/memshield --base microsoft/deberta-v3-large \
-		--out models/memshield-large --epochs 3 --lr 1e-5 --batch 8 --grad-accum 2 --max-length 512 --add-memevobench-dev
+		--out models/memshield-large --epochs 4 --lr 1e-5 --batch 8 --grad-accum 2 --max-length 512 --add-memevobench-dev \
+		--seeds 5 --warmup-ratio 0.1 --weight-decay 0.01 --best-epoch --calibrate-on-dev --min-threshold 0.5
 test:
 	.venv/bin/pytest -q
 lint:

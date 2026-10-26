@@ -37,3 +37,14 @@ def test_pick_threshold_rejects_nan_scores():
     import pytest
     with pytest.raises(ValueError, match="NaN"):
         pick_threshold([0, 1], [float("nan"), 0.9])
+
+
+def test_threshold_floor_and_seed_selection_on_calibration_data():
+    from memledger.guards.train.train_memshield import select_seed
+
+    y, s = [0, 0, 0, 1, 1], [0.001, 0.002, 0.003, 0.0025, 0.0028]  # badly calibrated: everything near 0
+    assert pick_threshold(y, s, max_fpr=0.4) < 0.5 and pick_threshold(y, s, max_fpr=0.4, floor=0.5) == 0.5
+    runs = [{"seed": 13, "calibration": {"recall": 0.90, "false_rejection": 0.04, "f1": 0.8}},
+            {"seed": 14, "calibration": {"recall": 0.95, "false_rejection": 0.05, "f1": 0.7}},
+            {"seed": 15, "calibration": {"recall": 0.95, "false_rejection": 0.02, "f1": 0.6}}]
+    assert select_seed(runs)["seed"] == 15  # recall first, then fewer false rejections

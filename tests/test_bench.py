@@ -262,3 +262,15 @@ def test_memshield_extra_rows_come_from_memevobench_dev_items_only(tmp_path):
     assert len(texts) == 2 * len(dev_ids) and sorted(labels) == [0] * len(dev_ids) + [1] * len(dev_ids)
     assert not any("same note" in t for t in texts)  # also in test items: held out
     assert not any(f"post {i}." in t for t in texts for i, sp in split_of.items() if sp == "test")
+
+
+def test_memevobench_dev_items_split_into_training_and_calibration(tmp_path):
+    from memledger.guards.train.train_memshield import memevo_rows
+
+    put(tmp_path, "memevobench", "finance.json", [
+        {"test_query": f"q{i}", "retrievable_memories": [
+            {"type": "note", "label": "correct", "title": "t", "note": f"Unique note {i}."}]} for i in range(60)])
+    dev, _ = memevo_rows(tmp_path, "dev")
+    tr, _ = memevo_rows(tmp_path, "dev", part="train")
+    va, _ = memevo_rows(tmp_path, "dev", part="val")
+    assert tr and va and not set(tr) & set(va) and set(tr) | set(va) == set(dev)
