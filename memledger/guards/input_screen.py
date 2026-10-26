@@ -240,6 +240,17 @@ class InputScreen:
         self.classifier_cutoff = (float(getattr(self.classifier, "cutoff", 0.0)) if classifier_cutoff is None
                                   else classifier_cutoff)
 
+    def _classifier_layer(self, raw: float) -> float:
+        """Below the tuned cut-off a classifier score counts as 0. A cut-off below `high` (Prompt Guard 2's is 0.006:
+        it scores BIPIA's polite injections low) maps [cut-off, 1] onto [high, 1], so passing it flags the input as
+        the tuning meant; cut-offs at or above `high` (ProtectAI's 0.99998) keep the raw score."""
+        c = self.classifier_cutoff
+        if raw < c:
+            return 0.0
+        if 0.0 < c < self.high:
+            return self.high + (1.0 - self.high) * (raw - c) / (1.0 - c)
+        return raw
+
     def band(self, score: float) -> str:
         return HIGH if score >= self.high else MID if score >= self.mid else LOW
 
@@ -257,7 +268,7 @@ class InputScreen:
         if self.classifier is not None:
             joined = "\n".join(v for _, v in u.views() if v)
             raw = float(self.classifier(joined)) if joined.strip() else 0.0
-            layers["classifier"] = raw if raw >= self.classifier_cutoff else 0.0
+            layers["classifier"] = self._classifier_layer(raw)
         score = max(layers.values())
         return ScreenResult(score, self.band(score), layers, hits, u, raw)
 

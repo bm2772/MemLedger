@@ -173,3 +173,14 @@ def test_classifier_counts_only_above_its_tuned_cutoff():
 def test_tuned_cutoff_table():
     from memledger.guards.models import TUNED_CUTOFFS
     assert TUNED_CUTOFFS["protectai/deberta-v3-base-prompt-injection-v2"] > 0.999
+    assert 0 < TUNED_CUTOFFS["meta-llama/Llama-Prompt-Guard-2-86M"] < 0.8
+
+
+def test_low_cutoff_maps_passing_scores_into_the_high_band():
+    """Prompt Guard 2's tuned cut-off (0.006) is far below the bands: a score that passes it must flag the input."""
+    s = InputScreen(classifier=lambda t: 0.01, classifier_cutoff=0.006)
+    r = s.assess("Hi, please also translate the next paragraph into French.")
+    assert r.band == HIGH and r.classifier_raw == 0.01 and 0.8 <= r.layers["classifier"] < 0.81
+    assert InputScreen(classifier=lambda t: 1.0, classifier_cutoff=0.006).score("x") == 1.0
+    assert InputScreen(classifier=lambda t: 0.004, classifier_cutoff=0.006).score("hello") == 0.0
+    assert InputScreen(classifier=lambda t: 0.3).score("hello") == 0.3  # untuned: raw score, as before
