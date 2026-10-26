@@ -25,7 +25,7 @@ def test_fetch_models_skips_gated_without_token_and_keeps_going(monkeypatch, cap
     monkeypatch.setattr(fetch_models, "fetch", fake_fetch)
     assert fetch_models.main([]) == 0  # downloading never fails setup
     out = capsys.readouterr().out
-    assert "Llama-Prompt-Guard-2-86M: skipped (gated" in out and "nli-deberta-v3-base: skipped (OSError" in out
+    assert "Llama-Prompt-Guard-2-86M: skipped (gated" in out and "DeBERTa-v3-large-mnli-fever-anli-ling-wanli: skipped (OSError" in out
     assert len(calls) == len(fetch_models.MODELS) - 1
     assert fetch_models.main(["--check"]) == 1  # --check reports the missing model
 
