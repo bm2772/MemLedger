@@ -6,3 +6,6 @@ date,member,instance,gpu,hours,usd,purpose,prompt_tokens,completion_tokens
 2026-10-26,M1,brev-massedcompute-L40,L40 48GB,1.87,1.98,complete run with the first memshield-large (unstable: threshold 0.022) + latency (tokens not recorded),,
 2026-10-26,M1,brev-massedcompute-L40,L40 48GB,0.20,0.21,stabilisation run 1: failed at training (transformers 5 has no warmup_ratio),0,0
 2026-10-26,M1,brev-massedcompute-L40,L40 48GB,4.85,5.14,stabilised memshield-large (5 seeds) + dev gate + final test runs + latency + dev NLI check,32953669,1343452
+2026-10-26,M1,brev-massedcompute-L40,L40 48GB,0.20,0.21,final run 2 attempt 1: HF token not found ($HF_HOME moved; MODELS_FAILED),0,0
+2026-10-26,M1,brev-massedcompute-L40,L40 48GB,2.10,2.23,final run 2: dev ProtectAI vs Prompt Guard 2 + test split 2299/version x 5 versions,22700357,1185327
+2026-10-26,M1,brev-massedcompute-L40,L40 48GB,0.70,0.74,final run 2 latency (1 worker; Prompt Guard 2) (tokens not recorded),,
