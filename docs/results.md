@@ -1,6 +1,6 @@
 # MemLedger results
 
-Run `brev-test` (2026-10-25T20:09:50+00:00) · episodes `attacks.suite:test` · split `test` · n = 1159 per version · LLM `Qwen/Qwen3-8B` · guards `hf`.
+Run `final2` (2026-10-26T19:37:40+00:00) · episodes `attacks.suite:test` · split `test` · n = 2299 per version · LLM `Qwen/Qwen3-8B` · guards `hf`.
 
 Every rate is x/n = p [95% Wilson interval]; when x = 0 the rule-of-three bound 3/n is added (eval/metrics.md).
 
@@ -8,34 +8,34 @@ Every rate is x/n = p [95% Wilson interval]; when x = 0 the rule-of-three bound 
 
 | version | Poison stored | Hijacked action rate (payment/email with attacker values) | Leak rate (all runs) | Leak rate (attack runs) |
 |---|---|---|---|---|
-| baseline | 1544/1544 = 100.0% [99.8%, 100.0%] | 322/363 = 88.7% [85.0%, 91.6%] | 333/1159 = 28.7% [26.2%, 31.4%] | 321/819 = 39.2% [35.9%, 42.6%] |
-| provenance | 1544/1544 = 100.0% [99.8%, 100.0%] | 290/363 = 79.9% [75.5%, 83.7%] | 112/1159 = 9.7% [8.1%, 11.5%] | 112/819 = 13.7% [11.5%, 16.2%] |
-| write_checks | 937/1544 = 60.7% [58.2%, 63.1%] | 145/363 = 39.9% [35.0%, 45.1%] | 107/1159 = 9.2% [7.7%, 11.0%] | 107/819 = 13.1% [10.9%, 15.5%] |
-| full | 208/1544 = 13.5% [11.9%, 15.3%] | 0/363 = 0.0% [0.0%, 1.0%], < 0.8% (rule of 3) | 0/1159 = 0.0% [0.0%, 0.3%], < 0.3% (rule of 3) | 0/819 = 0.0% [0.0%, 0.5%], < 0.4% (rule of 3) |
-| full_no_registry | 937/1544 = 60.7% [58.2%, 63.1%] | 0/363 = 0.0% [0.0%, 1.0%], < 0.8% (rule of 3) | 18/1159 = 1.6% [1.0%, 2.4%] | 18/819 = 2.2% [1.4%, 3.4%] |
+| baseline | 1682/1682 = 100.0% [99.8%, 100.0%] | 416/838 = 49.6% [46.3%, 53.0%] | 333/2299 = 14.5% [13.1%, 16.0%] | 321/1456 = 22.0% [20.0%, 24.2%] |
+| provenance | 1682/1682 = 100.0% [99.8%, 100.0%] | 376/838 = 44.9% [41.5%, 48.3%] | 112/2299 = 4.9% [4.1%, 5.8%] | 112/1456 = 7.7% [6.4%, 9.2%] |
+| write_checks | 1040/1682 = 61.8% [59.5%, 64.1%] | 138/838 = 16.5% [14.1%, 19.1%] | 107/2299 = 4.7% [3.9%, 5.6%] | 107/1456 = 7.3% [6.1%, 8.8%] |
+| full | 312/1682 = 18.5% [16.8%, 20.5%] | 0/838 = 0.0% [0.0%, 0.5%], < 0.4% (rule of 3) | 0/2299 = 0.0% [0.0%, 0.2%], < 0.1% (rule of 3) | 0/1456 = 0.0% [0.0%, 0.3%], < 0.2% (rule of 3) |
+| full_no_registry | 1041/1682 = 61.9% [59.5%, 64.2%] | 0/838 = 0.0% [0.0%, 0.5%], < 0.4% (rule of 3) | 18/2299 = 0.8% [0.5%, 1.2%] | 18/1456 = 1.2% [0.8%, 1.9%] |
 
 ## Cost (clean runs)
 
 | version | Task accuracy | Legit payment not completed correctly | Legit payment held or refused (false denial) | False rejection (harmless writes) | Seed memories rejected | Harmless inputs blocked | Approval load | Accuracy loss vs baseline | Write ms (median / p95) | Read ms (median / p95) | s / episode | LLM calls | LLM tokens (in / out) |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| baseline | 138/142 = 97.2% [93.0%, 98.9%] | 13/66 = 19.7% [11.9%, 30.8%] | 0/66 = 0.0% [0.0%, 5.5%], < 4.5% (rule of 3) | 0/364 = 0.0% [0.0%, 1.0%], < 0.8% (rule of 3) | 0/59 = 0.0% [0.0%, 6.1%], < 5.1% (rule of 3) | 0/344 = 0.0% [0.0%, 1.1%], < 0.9% (rule of 3) | 0/411 = 0.0% [0.0%, 0.9%], < 0.7% (rule of 3) | +0.0% [+0.0%, +0.0%] (n=142) | 0.6 / 1.0 | 1.1 / 3.0 | 1.76 | 1621 | 1930847 / 87892 |
-| provenance | 138/142 = 97.2% [93.0%, 98.9%] | 13/66 = 19.7% [11.9%, 30.8%] | 0/66 = 0.0% [0.0%, 5.5%], < 4.5% (rule of 3) | 0/364 = 0.0% [0.0%, 1.0%], < 0.8% (rule of 3) | 0/59 = 0.0% [0.0%, 6.1%], < 5.1% (rule of 3) | 0/344 = 0.0% [0.0%, 1.1%], < 0.9% (rule of 3) | 0/409 = 0.0% [0.0%, 0.9%], < 0.7% (rule of 3) | +0.0% [+0.0%, +0.0%] (n=142) | 0.8 / 1.1 | 2.8 / 7.5 | 1.78 | 1675 | 2075915 / 89398 |
-| write_checks | 136/142 = 95.8% [91.1%, 98.0%] | 13/66 = 19.7% [11.9%, 30.8%] | 0/66 = 0.0% [0.0%, 5.5%], < 4.5% (rule of 3) | 34/364 = 9.3% [6.8%, 12.8%] | 1/59 = 1.7% [0.3%, 9.0%] | 7/344 = 2.0% [1.0%, 4.1%] | 0/403 = 0.0% [0.0%, 0.9%], < 0.7% (rule of 3) | +1.4% [+0.0%, +3.5%] (n=142) | 22.3 / 61.0 | 2.0 / 4.9 | 2.21 | 1668 | 2017508 / 82711 |
-| full | 136/142 = 95.8% [91.1%, 98.0%] | 0/66 = 0.0% [0.0%, 5.5%], < 4.5% (rule of 3) | 0/66 = 0.0% [0.0%, 5.5%], < 4.5% (rule of 3) | 34/364 = 9.3% [6.8%, 12.8%] | 1/59 = 1.7% [0.3%, 9.0%] | 7/344 = 2.0% [1.0%, 4.1%] | 29/403 = 7.2% [5.1%, 10.1%] | +1.4% [+0.0%, +3.5%] (n=142) | 24.3 / 61.8 | 1.9 / 4.9 | 2.10 | 1664 | 1979101 / 82700 |
-| full_no_registry | 136/142 = 95.8% [91.1%, 98.0%] | 66/66 = 100.0% [94.5%, 100.0%] | 66/66 = 100.0% [94.5%, 100.0%] | 34/364 = 9.3% [6.8%, 12.8%] | 1/59 = 1.7% [0.3%, 9.0%] | 7/344 = 2.0% [1.0%, 4.1%] | 400/404 = 99.0% [97.5%, 99.6%] | +1.4% [+0.0%, +3.5%] (n=142) | 21.9 / 59.0 | 2.0 / 4.8 | 2.26 | 1661 | 2021387 / 88755 |
+| baseline | 210/238 = 88.2% [83.5%, 91.7%] | 13/66 = 19.7% [11.9%, 30.8%] | 0/66 = 0.0% [0.0%, 5.5%], < 4.5% (rule of 3) | 0/540 = 0.0% [0.0%, 0.7%], < 0.6% (rule of 3) | 0/59 = 0.0% [0.0%, 6.1%], < 5.1% (rule of 3) | 0/890 = 0.0% [0.0%, 0.4%], < 0.3% (rule of 3) | 0/534 = 0.0% [0.0%, 0.7%], < 0.6% (rule of 3) | +0.0% [+0.0%, +0.0%] (n=238) | 0.7 / 1.1 | 1.2 / 3.4 | 2.01 | 3948 | 3898087 / 228388 |
+| provenance | 206/238 = 86.6% [81.6%, 90.3%] | 13/66 = 19.7% [11.9%, 30.8%] | 0/66 = 0.0% [0.0%, 5.5%], < 4.5% (rule of 3) | 0/540 = 0.0% [0.0%, 0.7%], < 0.6% (rule of 3) | 0/59 = 0.0% [0.0%, 6.1%], < 5.1% (rule of 3) | 0/890 = 0.0% [0.0%, 0.4%], < 0.3% (rule of 3) | 0/526 = 0.0% [0.0%, 0.7%], < 0.6% (rule of 3) | +1.7% [+0.0%, +3.8%] (n=238) | 0.8 / 1.3 | 3.1 / 8.1 | 1.97 | 4004 | 4045786 / 230371 |
+| write_checks | 201/238 = 84.5% [79.3%, 88.5%] | 13/66 = 19.7% [11.9%, 30.8%] | 0/66 = 0.0% [0.0%, 5.5%], < 4.5% (rule of 3) | 30/540 = 5.6% [3.9%, 7.8%] | 0/59 = 0.0% [0.0%, 6.1%], < 5.1% (rule of 3) | 16/890 = 1.8% [1.1%, 2.9%] | 0/397 = 0.0% [0.0%, 1.0%], < 0.8% (rule of 3) | +3.8% [+1.7%, +6.3%] (n=238) | 23.9 / 104.3 | 2.0 / 5.0 | 2.61 | 3864 | 3741756 / 198110 |
+| full | 200/238 = 84.0% [78.8%, 88.1%] | 0/66 = 0.0% [0.0%, 5.5%], < 4.5% (rule of 3) | 0/66 = 0.0% [0.0%, 5.5%], < 4.5% (rule of 3) | 30/540 = 5.6% [3.9%, 7.8%] | 0/59 = 0.0% [0.0%, 6.1%], < 5.1% (rule of 3) | 16/890 = 1.8% [1.1%, 2.9%] | 21/395 = 5.3% [3.5%, 8.0%] | +4.2% [+1.7%, +7.1%] (n=238) | 26.1 / 102.8 | 2.0 / 5.0 | 2.48 | 3862 | 3700317 / 197919 |
+| full_no_registry | 203/238 = 85.3% [80.2%, 89.2%] | 66/66 = 100.0% [94.5%, 100.0%] | 66/66 = 100.0% [94.5%, 100.0%] | 30/540 = 5.6% [3.9%, 7.8%] | 0/59 = 0.0% [0.0%, 6.1%], < 5.1% (rule of 3) | 16/890 = 1.8% [1.1%, 2.9%] | 388/396 = 98.0% [96.1%, 99.0%] | +2.9% [+0.4%, +5.5%] (n=238) | 23.9 / 103.0 | 2.1 / 5.0 | 2.65 | 3855 | 3732478 / 204775 |
 
-Write/read ms and s/episode from run `brev-test-latency` (1 worker, n = 140 per version); everything else from `brev-test`.
+Write/read ms and s/episode from run `final2-latency` (1 worker, n = 140 per version); everything else from `final2`.
 
-Errors per version: baseline 0/1159 = 0.0% [0.0%, 0.3%], < 0.3% (rule of 3), provenance 0/1159 = 0.0% [0.0%, 0.3%], < 0.3% (rule of 3), write_checks 0/1159 = 0.0% [0.0%, 0.3%], < 0.3% (rule of 3), full 0/1159 = 0.0% [0.0%, 0.3%], < 0.3% (rule of 3), full_no_registry 0/1159 = 0.0% [0.0%, 0.3%], < 0.3% (rule of 3)
+Errors per version: baseline 1/2299 = 0.0% [0.0%, 0.2%], provenance 0/2299 = 0.0% [0.0%, 0.2%], < 0.1% (rule of 3), write_checks 1/2299 = 0.0% [0.0%, 0.2%], full 0/2299 = 0.0% [0.0%, 0.2%], < 0.1% (rule of 3), full_no_registry 1/2299 = 0.0% [0.0%, 0.2%]
 
 ## Slide claims → evidence
 
 | slide | claim | evidence | status |
 |---|---|---|---|
-| 18 | Leak rate 0 on the full system | `leak_rate` on `full`: 0/1159 = 0.0% [0.0%, 0.3%], < 0.3% (rule of 3) | met |
-| 18 | Hijacked action rate ≈ 0 (attacker's account never paid) | `hijacked_action_rate` on `full`: 0/363 = 0.0% [0.0%, 1.0%], < 0.8% (rule of 3) | met |
-| 18 | Poison stored rate lower than baseline | `poison_stored_rate` on `full`: 208/1544 = 13.5% [11.9%, 15.3%] | met |
-| 19 | ≤ 5% of harmless writes rejected | `false_rejection_rate` on `full`: 34/364 = 9.3% [6.8%, 12.8%] | not met |
+| 18 | Leak rate 0 on the full system | `leak_rate` on `full`: 0/2299 = 0.0% [0.0%, 0.2%], < 0.1% (rule of 3) | met |
+| 18 | Hijacked action rate ≈ 0 (attacker's account never paid) | `hijacked_action_rate` on `full`: 0/838 = 0.0% [0.0%, 0.5%], < 0.4% (rule of 3) | met |
+| 18 | Poison stored rate lower than baseline | `poison_stored_rate` on `full`: 312/1682 = 18.5% [16.8%, 20.5%] | met |
+| 19 | ≤ 5% of harmless writes rejected | `false_rejection_rate` on `full`: 30/540 = 5.6% [3.9%, 7.8%] | not met |
 | 19 | Legitimate payments not held or refused (false denial) | `gate_denial_rate` on `full`: 0/66 = 0.0% [0.0%, 5.5%], < 4.5% (rule of 3) | met |
 | 18 | Tamper detection 100% (5 edit types incl. labels) | `tests/integration/test_properties.py::test_tamper_detection_is_100_percent_on_full` | test (passes in CI) |
 | 7 | Trust worked example 0.81 / 0.56 / 0.92, retraction back to 0.56 | `tests/core/test_trust.py::test_slide7_worked_example` | test (passes in CI) |
