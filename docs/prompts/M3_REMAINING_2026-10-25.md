@@ -102,6 +102,37 @@ through 9/10 on `full` (2/20 with your model on 24 Oct).
 Note: a bigger *agent* model on Brev (e.g. the optional larger run) does NOT need a new memshield. It's trained on
 memshield-bench memory texts, not on the agent's outputs. Retrain only if its data or base model changes.
 
+## 6. More benchmarks for the results — branch `m3/more-benchmarks`, by Mon 27 Oct 10:00 (added 26 Oct)
+Context: the final Brev runs are done (PR #21, docs/results/brev_run_2026-10-26.md; Qwen3-8B and 32B, test split,
+0 errors). Two cheap additions would make the results stronger before the v1.0 tag. Branch from `integration/v1`.
+```
+6a. Bigger samples of the benchmarks we already run. attacks/suite.py SuiteConfig.bench_limit = 40 per benchmark
+    and split (bench/loaders.py DEFAULT_LIMIT = 50), so the test split has only agentdojo 15, injecagent 80,
+    bipia 80, memshield 80, memevobench 80 episodes (intervals of +-10-15 points per benchmark).
+    - Make the limit per benchmark (e.g. bench_limits={"injecagent": 300, "agentdojo": None (all),
+      "bipia": 200, "memshield": 179 (all of test), "memevobench": None}) and raise it for the TEST split only;
+      keep dev as it is (it is used for tuning).
+    - Keep every split rule: tests/test_consistency.py (no shared benchmark text, incl. stub-tool documents),
+      the BIPIA train/test dedupe, MemEvoBench hash_split. Rebuild data/attacks and docs/results/suite_manifest.json.
+    - Say in the PR how many test episodes per version it gives (now 1159), so we can size the Brev run
+      (16 workers ran ~1159 episodes x 5 versions in ~55 min on an L40).
+6b. RAGTruth and HaluEval for the hallucination check on its own (deck slide 13; docs/results.md lists
+    "Detection F1 on RAGTruth / HaluEval" as not measured). No agent, no LLM:
+    - bench/download.py + a loader for each that yields (source documents, response/claim, label hallucinated?).
+    - a script (e.g. eval/hallucination_bench.py) that runs memledger.guards.hallucination.HallucinationCheck
+      (MiniCheck-RoBERTa-Large, threshold 0.5, chunking as in production) and reports precision / recall / F1 /
+      false-rejection with Wilson intervals, per dataset. Use each dataset's official test split; if you tune
+      anything (threshold), tune on their dev/train split only and say so.
+    - output docs/results/hallucination_benchmarks.md; move the item out of NOT_YET in eval/report.py.
+    - runs on a Mac (CPU/MPS) or in the next Brev session; keep it under ~30 min on a GPU.
+6c. Stretch, only if 6a/6b are done: the official PoisonedRAG data (NQ / HotpotQA / MS-MARCO) as a benchmark
+    next to our re-implemented poisonedrag family (8/60 attacks still get through on `full`).
+make test + make lint green; open a PR into integration/v1 and tag Banaj; Banaj runs the Brev part.
+```
+Also: memshield-large (DeBERTa-v3-large + MemEvoBench dev memories, test items held out) is being trained and
+evaluated on Brev today (branch m1/model-upgrades). It is your area: please review that PR when it opens; it also
+answers your MemEvoBench decision (train on dev, report test) unless you prefer to report MemEvoBench separately.
+
 ## Deadlines
 1, 2, 5 (publish the memshield model, by 10:00) and the memshield fine-tune (see M3_attacks_data.md) by Sun 26 Oct 12:00 (M4 then runs the final Brev test on a reproducible setup); 3 by Sun 26 Oct 18:00; 4 by Sun 26 Oct 12:00.
 Mon 27 Oct: test M2's area (guards/policy/registry) per docs/TEAM_PLAN.md.
