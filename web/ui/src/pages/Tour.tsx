@@ -24,7 +24,8 @@ type Tour = { query: string; backend: string; steps: Step[] };
 const SIDE_TITLE = { baseline: "Plain memory", full: "MemLedger" } as const;
 
 export default function TourPage() {
-  const { data, error, loading, reload } = useApi<Tour>("/tour");
+  const [fresh, setFresh] = useState(0);  // Replay plays the story again on the server (otherwise cached)
+  const { data, error, loading } = useApi<Tour>(fresh ? `/tour?fresh=true&n=${fresh}` : "/tour", [fresh]);
   const [i, setI] = useState(() => Math.max(0, (parseInt(window.location.hash.slice(1), 10) || 1) - 1));  // /tour#3
   const nav = useNavigate();
   const n = data?.steps.length ?? 0;
@@ -41,7 +42,7 @@ export default function TourPage() {
     return () => window.removeEventListener("keydown", k);
   }, [go]);
 
-  const replay = () => { setI(0); reload(); };
+  const replay = () => { setI(0); setFresh((f) => f + 1); };
   if (error) return <div className="page"><Callout tone="bad" title="The tour could not run">{error.message}</Callout></div>;
   if (!data) return <div className="page"><PageHead title="How MemLedger works" /><div className="row muted">{loading && <Spinner />}Playing the story on both memories…</div></div>;
   const step = data.steps[Math.min(i, n - 1)];

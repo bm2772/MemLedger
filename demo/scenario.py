@@ -42,13 +42,14 @@ def acme_episode() -> Episode:
     })
 
 
-def play_acme(version: str, llm=None) -> dict:
-    """Run slide 5 on one version ('baseline' = plain memory, 'full' = MemLedger). Returns what each step did."""
+def play_acme(version: str, llm=None, models: dict | None = None) -> dict:
+    """Run slide 5 on one version ('baseline' = plain memory, 'full' = MemLedger). Returns what each step did.
+    `models`: the guard models (eval.versions.load_guard_models); None = the lexical checkers."""
     from eval.llm import GullibleLLM
     from eval.versions import build
 
     ep = acme_episode()
-    built = build(version, ep.registry, backend="lexical")
+    built = build(version, ep.registry, models=models, backend=None if models else "lexical")
     svc = built.service
     res = run_episode(ep, svc, llm or GullibleLLM(), registry_lookup=built.registry.get if built.registry else None,
                       gate=svc.gate)
