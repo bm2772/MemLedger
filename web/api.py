@@ -429,6 +429,14 @@ def create_app(data_dir: str | Path | None = None, auth: Auth | None = None,
 
         return sc.tamper_demo(body.edit)
 
+    @app.get("/api/tour")
+    def tour(_: Me):
+        from web import (
+            tour as t,  # the story on fresh in-memory services (web/tour.py); no workspace is touched
+        )
+
+        return {**t.play(models), "backend": backend}
+
     @app.get("/api/results")
     def results(_: Me):
         md = ROOT / "docs" / "results.md"

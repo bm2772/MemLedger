@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   Activity, BookLock, Bot, Brain, ChevronsUpDown, FlaskConical, Database, LayoutDashboard, LogOut, Menu, Moon,
-  ScrollText, Search, Sun, BarChart3, Boxes,
+  ScrollText, Search, Sun, BarChart3, Boxes, Route as RouteIcon,
 } from "lucide-react";
 import { api, ApiError, identity, useApi, type Config, type Session, type WorkspaceSummary } from "./api";
 import { AppCtx, Spinner, useApp, useToasts, VERSION_LABEL } from "./components/ui";
@@ -16,6 +16,7 @@ import Registry from "./pages/Registry";
 import Audit from "./pages/Audit";
 import Lab from "./pages/Lab";
 import Results from "./pages/Results";
+import TourPage from "./pages/Tour";
 import Login from "./pages/Login";
 
 type Theme = "dark" | "light";
@@ -80,6 +81,7 @@ function Shell() {
         <TopBar ws={ws} onMenu={() => setOpen(true)} />
         <Routes>
           <Route path="/" element={<Workspaces />} />
+          <Route path="/tour" element={<TourPage />} />
           <Route path="/lab" element={<Lab />} />
           <Route path="/results" element={<Results />} />
           <Route path="/w/:ws" element={<WsRoute el="overview" />} />
@@ -129,6 +131,7 @@ function Sidebar({ ws, open }: { ws?: string; open: boolean }) {
       </div>
       <div className="nav-label">Evaluate</div>
       <div className="nav">
+        <NavLink to="/tour"><RouteIcon />How it works</NavLink>
         <NavLink to="/lab"><FlaskConical />Attack lab</NavLink>
         <NavLink to="/results"><BarChart3 />Results</NavLink>
         <NavLink to="/" end><Boxes />All workspaces</NavLink>
