@@ -2,7 +2,7 @@ date,member,instance,gpu,hours,usd,purpose,prompt_tokens,completion_tokens
 2026-10-25,M3,mac-m4-local,Apple M4 16GB (MPS),0.16,0,memshield fine-tune deberta-v3-base 3 epochs (plus ~1.8 h of failed fp16/swapping attempts),0,0
 2026-10-26,M1,brev-massedcompute-L40,L40 48GB,3.40,3.60,final test runs: Qwen3-8B + latency + Qwen3-32B-FP8,20404026,897118
 2026-10-26,M1,brev-hyperstack-L40,L40 48GB,0.45,0.48,checker-upgrade run: setup failed (CUDA 12.8 driver too old for vLLM 0.32),0,0
-2026-10-26,M1,brev-massedcompute-L40,L40 48GB,1.05,1.11,checker-upgrade run: memshield-large + large NLI on the 8B test split,0,0
-2026-10-26,M1,brev-massedcompute-L40,L40 48GB,1.87,1.98,complete run with the first memshield-large (unstable: threshold 0.022) + latency,0,0
+2026-10-26,M1,brev-massedcompute-L40,L40 48GB,1.05,1.11,checker-upgrade run: memshield-large + large NLI on the 8B test split (tokens not recorded),,
+2026-10-26,M1,brev-massedcompute-L40,L40 48GB,1.87,1.98,complete run with the first memshield-large (unstable: threshold 0.022) + latency (tokens not recorded),,
 2026-10-26,M1,brev-massedcompute-L40,L40 48GB,0.20,0.21,stabilisation run 1: failed at training (transformers 5 has no warmup_ratio),0,0
 2026-10-26,M1,brev-massedcompute-L40,L40 48GB,4.85,5.14,stabilised memshield-large (5 seeds) + dev gate + final test runs + latency + dev NLI check,32953669,1343452
