@@ -187,3 +187,17 @@ def test_evaluate_runs_all_five_versions_on_a_small_subset(tmp_path, monkeypatch
     assert set(res["overall"]) == set(VERSIONS)
     assert res["overall"]["baseline"]["attack_success"]["p"] > res["overall"]["full"]["attack_success"]["p"] == 0
     assert "| minja |" in (tmp_path / "t" / "families.md").read_text()
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_tamper_is_still_carried_out_when_its_target_seed_was_rejected(suite, kind):
+    """26 Oct Brev run: an over-rejecting memshield refused the target seed, no tamper happened, and the untouched
+    memories were scored as tampered (6 false leaks on full). The first stored seed is tampered instead."""
+    ep = next(e for e in suite["test"] if e.meta.get("family") == "db_tamper" and e.meta["tamper"]["kind"] == kind)
+    targets = set(ep.meta["tamper"]["targets"])
+    keep = next(s for s in ep.seeds if s.id not in targets)  # memshield rejects every seed except this one
+    drop = {s.content for s in ep.seeds if s.id != keep.id}
+    shield = lambda text: 0.99 if text in drop else 0.0
+    row, _ = run_one(ep, resolve_version("full"), GullibleLLM(), {"memshield": shield}, "lexical")
+    assert row["tamper"]["retargeted"] and row["tamper"]["victims"] >= 1
+    assert row["tamper"]["detected"] and not row["leaks"], row["tamper"]
