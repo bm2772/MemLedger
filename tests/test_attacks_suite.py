@@ -1,8 +1,10 @@
 """M3 attack suite: dev >= 150, disjoint fixed splits, ground truth on every attack, replays on the real service."""
 
 import json
+from collections import Counter
 
 from attacks.suite import SuiteConfig, build, manifest, write
+from bench import load
 from memledger.agent.episode import load_jsonl
 from tests.test_bench import root  # noqa: F401  (tiny on-disk benchmark fixtures)
 
@@ -80,3 +82,15 @@ def test_fake_fact_attacks_replay_on_real_service(root):  # noqa: F811
                               gate=svc.gate)
             hijacked[version] = any(tool_call_matches(x, e.attacker_goal) for x in res.outbox)
         assert hijacked == {"baseline": True, "full": False}, e.id
+
+
+def test_test_split_samples_benchmarks_more_than_dev(root):  # noqa: F811
+    """6a: bigger test samples per benchmark; dev (used for tuning) keeps bench_limit."""
+    cfg = SuiteConfig(dev_worlds=0, test_worlds=0, family_sizes={}, bench_limit=1,
+                      test_bench_limits={"memshield": None, "bipia": 2})
+    assert (cfg.limit("memshield", "dev"), cfg.limit("memshield", "test"), cfg.limit("bipia", "test"),
+            cfg.limit("memevobench", "test")) == (1, None, 2, 1)
+    dev = Counter(e.source for e in build("dev", cfg, root=root)[0])
+    test = Counter(e.source for e in build("test", cfg, root=root)[0])
+    assert dev["memshield"] == 2 and test["memshield"] == len(load("memshield", "test", None, root=root)) > 2
+    assert dev["bipia"] == 2 and test["bipia"] == 4 and test["memevobench"] == dev["memevobench"] == 2
