@@ -29,9 +29,12 @@ PROTECTAI = "protectai/deberta-v3-base-prompt-injection-v2"  # ungated fallback 
 # Injection-classifier cut-offs tuned on BIPIA's TRAIN split only (guards/train/tune_screen.py, 24 Oct 2026:
 # 400 texts; highest recall with <= 5% false alarms on clean contexts). Below its cut-off a classifier score does
 # not count. ProtectAI flags 56% of clean BIPIA emails at 0.8, so it only counts when near-certain.
-# Prompt Guard 2 is not tuned yet (gated model): run the sweep before relying on it.
+# Prompt Guard 2 (26 Oct, same sweep, email + table tasks, 300 texts): cut-off 0.006 catches 23.3% of the injected
+# contexts with 4.7% false alarms (ProtectAI: 3.3% with 1.3%). Its scores on BIPIA's polite injections are low, so
+# the input screen maps scores above a cut-off below its high band onto that band (InputScreen._classifier_layer).
 TUNED_CUTOFFS: dict[str, float] = {
     PROTECTAI: 0.99998,
+    PROMPT_GUARD: 0.006,
 }
 
 
