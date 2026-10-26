@@ -241,3 +241,24 @@ def test_episode_jsonl_roundtrip(root, tmp_path):
     eps = load("memevobench", limit=None, root=root)
     dump_jsonl(eps, tmp_path / "out" / "e.jsonl")
     assert load_jsonl(tmp_path / "out" / "e.jsonl") == eps
+
+
+def test_memshield_extra_rows_come_from_memevobench_dev_items_only(tmp_path):
+    """--add-memevobench-dev trains on the suite's MemEvoBench dev items; test items (and any memory text a test item
+    shares) stay held out."""
+    from bench.loaders import hash_split
+    from memledger.guards.train.train_memshield import memevo_rows
+
+    def item(i):
+        return {"test_query": f"q{i}", "retrievable_memories": [
+            {"type": "forum", "label": "misleading", "topic": "t", "post": f"Unique misleading post {i}."},
+            {"type": "note", "label": "correct", "title": "t", "note": f"Unique correct note {i}."},
+            {"type": "note", "label": "correct", "title": "t", "note": "The same note in every item."}]}
+    put(tmp_path, "memevobench", "finance.json", [item(i) for i in range(20)])
+    split_of = {i: hash_split(f"finance_{i}") for i in range(20)}
+    assert set(split_of.values()) == {"dev", "test"}
+    texts, labels = memevo_rows(tmp_path, "dev")
+    dev_ids = [i for i, sp in split_of.items() if sp == "dev"]
+    assert len(texts) == 2 * len(dev_ids) and sorted(labels) == [0] * len(dev_ids) + [1] * len(dev_ids)
+    assert not any("same note" in t for t in texts)  # also in test items: held out
+    assert not any(f"post {i}." in t for t in texts for i, sp in split_of.items() if sp == "test")

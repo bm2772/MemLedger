@@ -6,7 +6,7 @@ export MEMLEDGER_PROMPT_GUARD_MODEL ?= $(if $(HF_TOKEN),meta-llama/Llama-Prompt-
 # use the fine-tuned memshield classifier once `make memshield` has produced it (models/ is gitignored)
 export MEMLEDGER_MEMSHIELD_MODEL ?= $(if $(wildcard $(MEMSHIELD_DIR)/config.json),$(abspath $(MEMSHIELD_DIR)))
 
-.PHONY: setup setup-models data suite memshield test lint eval-local eval-brev-smoke eval-brev eval-latency
+.PHONY: setup setup-models data suite memshield memshield-large test lint eval-local eval-brev-smoke eval-brev eval-latency
 
 # never re-create an existing .venv with another Python (that mixes site-packages); delete .venv to change Python
 VENV = [ -x .venv/bin/python ] || $(PY) -m venv .venv
@@ -28,6 +28,9 @@ memshield:  # fine-tune the write-time memory screen on memshield TRAIN (thresho
 	PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.8 PYTORCH_MPS_LOW_WATERMARK_RATIO=0.6 \
 	.venv/bin/python -m memledger.guards.train.train_memshield --data data/memshield --out $(MEMSHIELD_DIR) \
 		--epochs 3 --lr 2e-5 --batch 2 --grad-accum 8 --max-length 384
+memshield-large:  # Brev GPU: DeBERTa-v3-large + MemEvoBench dev memories (its test items held out) -> models/memshield-large
+	.venv/bin/python -m memledger.guards.train.train_memshield --data data/memshield --base microsoft/deberta-v3-large \
+		--out models/memshield-large --epochs 3 --lr 1e-5 --batch 8 --grad-accum 2 --max-length 512 --add-memevobench-dev
 test:
 	.venv/bin/pytest -q
 lint:

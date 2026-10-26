@@ -30,6 +30,26 @@ def detect_columns(columns: list[str], text_col: str | None = None, label_col: s
     return t, lab
 
 
+def memevo_rows(root: str | Path | None = None, split: str = "dev") -> tuple[list[str], list[int]]:
+    """MemEvoBench memories of the suite's `split` items as (texts, labels), label 1 = misleading.
+
+    Same item split (bench.loaders.hash_split) and the same memory rendering as the eval episodes; a dev memory whose
+    text also occurs in a test item is dropped, so training on "dev" never sees test content (MemEvoBench transfer of memshield: recall 0.21, docs/results/memshield.md)."""
+    import json as _json
+
+    from bench.download import data_dir
+    from bench.loaders import hash_split, render_memory
+
+    rows: dict[str, list[tuple[str, int]]] = {"dev": [], "test": []}
+    for path in sorted(data_dir("memevobench", root).glob("*.json")):
+        for i, x in enumerate(_json.loads(path.read_text())):
+            rows[hash_split(f"{path.stem}_{i}")] += [(render_memory(m), int(m.get("label") == "misleading"))
+                                                     for m in x["retrievable_memories"]]
+    held_out = {t for t, _ in rows["test"]} if split != "test" else set()  # a text shared with a test item stays out
+    kept = [(t, y) for t, y in rows[split] if t not in held_out]
+    return [t for t, _ in kept], [y for _, y in kept]
+
+
 def to_binary(v: object) -> int:
     """Labels may be bools, ints or strings such as 'poisoned'/'clean'."""
     if isinstance(v, str):
@@ -83,6 +103,8 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - needs GPU,
     ap.add_argument("--cpu", action="store_true", help="train on the CPU even if a GPU / Apple MPS is available")
     ap.add_argument("--class-weight", choices=["none", "balanced"], default="none")
     ap.add_argument("--max-fpr", type=float, default=0.05, help="false-rejection budget for the validation threshold")
+    ap.add_argument("--add-memevobench-dev", action="store_true",
+                    help="also train on MemEvoBench memories of the suite's dev items (its test items stay held out)")
     a = ap.parse_args(argv)
 
     import torch
@@ -102,6 +124,18 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - needs GPU,
     if not {"train", "validation", "test"} <= set(ds):
         raise SystemExit(f"{a.data or a.dataset} needs train, validation and test splits, has {list(ds)}")
     text_col, label_col = detect_columns(ds["train"].column_names, a.text_col, a.label_col)
+    extra = 0
+    if a.add_memevobench_dev:
+        from datasets import Dataset, concatenate_datasets
+
+        texts, ys = memevo_rows(split="dev")
+        sample = ds["train"][0][label_col]  # keep the dataset's label vocabulary ("clean"/"poisoned", bool or int)
+        word = {0: "clean", 1: "poisoned"} if isinstance(sample, str) else {0: type(sample)(0), 1: type(sample)(1)}
+        cols = {text_col: texts, label_col: [word[y] for y in ys]}
+        extra_ds = Dataset.from_dict(cols).cast(ds["train"].select_columns([text_col, label_col]).features)
+        ds["train"] = concatenate_datasets([ds["train"].select_columns([text_col, label_col]), extra_ds])
+        extra = len(texts)
+        print(f"+ {extra} MemEvoBench dev memories ({sum(ys)} misleading) in training", flush=True)
     tok = AutoTokenizer.from_pretrained(a.base)
 
     def prep(batch: dict) -> dict:
@@ -156,6 +190,7 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - needs GPU,
     tok.save_pretrained(a.out)
     settings = {k: getattr(a, k) for k in ("dataset", "data", "base", "epochs", "lr", "batch", "grad_accum",
                                            "max_length", "seed", "class_weight", "max_fpr", "cpu")}
+    settings["memevobench_dev_rows"] = extra
     (Path(a.out) / "threshold.json").write_text(json.dumps({"threshold": threshold, "chosen_on": "validation",
                                                              "max_fpr": a.max_fpr}, indent=2))
     (Path(a.out) / "test_metrics.json").write_text(json.dumps({
