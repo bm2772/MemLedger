@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowRight, Boxes, FlaskConical, Plus, ShieldCheck, Trash2 } from "lucide-react";
+import { ArrowRight, Boxes, FlaskConical, Plus, Route, ShieldCheck, Trash2 } from "lucide-react";
 import { api, useApi, when, type WorkspaceSummary } from "../api";
 import { Badge, Empty, Modal, PageHead, Spinner, useApp, VERSION_LABEL } from "../components/ui";
 
@@ -33,7 +33,8 @@ export default function Workspaces() {
         <h1 style={{ marginTop: 14 }}>Every memory your agent keeps has a source, a trust score and an audit trail.</h1>
         <p>MemLedger screens what agents read, checks what they remember, quarantines whatever depended on a poisoned source, and detects tampering on every read.</p>
         <div className="row" style={{ marginTop: 20 }}>
-          <button className="btn primary" onClick={() => setCreating(true)}><Plus />New workspace</button>
+          <button className="btn primary" onClick={() => nav("/tour")}><Route />See how it works</button>
+          <button className="btn" onClick={() => setCreating(true)}><Plus />New workspace</button>
           <button className="btn" onClick={() => nav("/lab")}><FlaskConical />Open the attack lab</button>
         </div>
       </section>
