@@ -84,7 +84,11 @@ def mode(prot: bool) -> str:
 
 @st.cache_resource(show_spinner="Loading the checker models…")
 def guard_models() -> dict:
-    return load_guard_models()  # loaded once per server, shared by every chat
+    """Loaded once per server and shared by every chat. The models load lazily, so a protected memory is built once
+    here (its seeds run every check): otherwise the first switch to ON would stall for ~15 s mid-demo."""
+    models = load_guard_models()
+    chat.World(True, llm=agent_llm(), models=models)
+    return models
 
 
 @st.cache_resource
