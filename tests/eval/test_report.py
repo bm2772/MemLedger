@@ -41,3 +41,16 @@ def test_multi_worker_latency_is_omitted_or_taken_from_the_latency_run(summary):
     lat["metrics"] = {v: dict(x, write_ms={"median": 7.5, "p95": 9.0, "n": 3}) for v, x in summary["metrics"].items()}
     md = render(par, lat)
     assert "from run `lat` (1 worker" in md and "7.5 / 9.0" in md and "n/a" not in md.split("## Slide claims")[0]
+
+
+def test_latency_option_refuses_a_multi_worker_run(summary, tmp_path):
+    import json
+
+    import pytest
+
+    from eval.report import main
+
+    (tmp_path / "s.json").write_text(json.dumps(summary))
+    (tmp_path / "par.json").write_text(json.dumps(dict(summary, latency_valid=False, workers=16)))
+    with pytest.raises(SystemExit, match="parallel"):
+        main([str(tmp_path / "s.json"), "--out", str(tmp_path / "r.md"), "--latency", str(tmp_path / "par.json")])

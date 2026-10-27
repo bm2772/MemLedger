@@ -142,6 +142,9 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--latency", help="summary.json of a 1-worker run (make eval-latency) for the ms columns")
     a = ap.parse_args(argv)
     latency = json.loads(Path(a.latency).read_text()) if a.latency else None
+    if latency is not None and not latency.get("latency_valid", True):  # Omkaar's #21 review
+        raise SystemExit(f"--latency {a.latency} ran {latency.get('workers', '?')} episodes in parallel: its ms include "
+                         "thread contention; pass a 1-worker run (make eval-latency)")
     Path(a.out).write_text(render(json.loads(Path(a.summary).read_text()), latency))
     print(f"wrote {a.out}")
 
