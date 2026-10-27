@@ -1,7 +1,7 @@
 """MemLedger chat demo: talk to a live agent, with MemLedger protection switched on or off.
 
     pip install -e ".[demo]"
-    bash demo/run.sh            # offline: fooled test model + code-only checkers, no network needed
+    bash demo/run.sh            # needs the agent LLM at $MEMLEDGER_LLM_URL and the checker models (see README)
 
 Pick who you are in the sidebar, set the protection switch and type a prompt. The agent runs it on a shared memory
 (demo/chat.py) and the chat shows its activity as it happens: what it planned to do (harmful steps marked), every
@@ -21,11 +21,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:  # `streamlit run demo/app.py` puts demo/ on the path, not the repo root
     sys.path.insert(0, str(ROOT))
-os.environ.setdefault("MEMLEDGER_GUARD_BACKEND", "lexical")  # offline by default: the code-only checkers
 
 import streamlit as st
 
 from demo import chat
+from eval.versions import guard_backend, load_guard_models
 
 DELAY = float(os.environ.get("DEMO_DELAY", "0.6"))
 
@@ -82,17 +82,40 @@ def mode(prot: bool) -> str:
     return "🟢 **Protection ON**: full MemLedger" if prot else "🔴 **Protection OFF**: plain memory"
 
 
+@st.cache_resource(show_spinner="Loading the checker models…")
+def guard_models() -> dict:
+    return load_guard_models()  # loaded once per server, shared by every chat
+
+
+@st.cache_resource
+def agent_llm():
+    return chat.default_llm()
+
+
+CHECKERS = {"hf": "MiniCheck, DeBERTa NLI, injection classifier (Hugging Face)",
+            "lexical": "code-only fallbacks (tests only, not the real models)"}
+try:
+    llm, models = agent_llm(), guard_models()
+except Exception as e:  # noqa: BLE001 - no model, no demo: say what is missing instead of a traceback
+    st.error(f"The real models are not available: {e}. Start vLLM (infra/README.md) and use demo/run.sh.")
+    st.stop()
+
+
+def new_world(prot: bool) -> chat.World:
+    return chat.World(prot, llm=llm, models=models)
+
+
 if "world" not in st.session_state or reset:
-    st.session_state.world, st.session_state.log = chat.World(protected), []
+    st.session_state.world, st.session_state.log = new_world(protected), []
 elif st.session_state.world.protected != protected:  # flipping the switch starts a fresh memory
-    st.session_state.world = chat.World(protected)
+    st.session_state.world = new_world(protected)
     sep = f"Protection switched {'ON' if protected else 'OFF'}: fresh memory with the same starting notes"
     st.session_state.log.append(("sep", sep))
 world: chat.World = st.session_state.world
 st.caption(mode(protected) + " · settings in the sidebar")
 
 with st.sidebar:
-    st.caption(mode(protected) + "  \nAgent: fooled test model (believes everything it reads)")
+    st.caption(mode(protected) + f"  \nAgent LLM: `{llm.model}`  \nCheckers: {CHECKERS.get(guard_backend(), guard_backend())}")
     with st.expander("Starting memory"):
         st.markdown(world.starting_notes() + "  \n**Signed registry:** Acme Ltd's account is 1234; lab reports go "
                     "to reports@lab.example.")
@@ -157,10 +180,15 @@ def show(item) -> None:
         st.markdown(outcome_html(t), unsafe_allow_html=True)
 
 
-def play(t: chat.Turn) -> None:
-    """Show a new turn as it happens: the activity fills in step by step, then the reply and the outcome."""
+def play(person: chat.Person, prompt: str) -> chat.Turn:
+    """Run a prompt and show the turn as it happens: "working…" while the models run, then the activity step by step,
+    the reply and the outcome."""
+    t = chat.Turn(person, prompt)
     with st.chat_message("assistant", avatar=agent_avatar(t)):
         box = st.empty()
+        box.markdown(activity_html(t, 0, False), unsafe_allow_html=True)
+        t = world.send(person, prompt)
+        st.session_state.log.append(("turn", t))  # logged before the animation: a rerun mid-way still keeps the turn
         for n in range(len(t.steps) + 1):
             box.markdown(activity_html(t, n, False), unsafe_allow_html=True)
             time.sleep(DELAY)
@@ -168,6 +196,7 @@ def play(t: chat.Turn) -> None:
     if t.outcome:
         time.sleep(DELAY / 2)
         st.markdown(outcome_html(t), unsafe_allow_html=True)
+    return t
 
 
 for item in st.session_state.log:
@@ -177,6 +206,4 @@ hint = ("Type SQL to run directly on the database…" if person.session is None
         else f"Message the agent as {person.name}…")
 if prompt := st.chat_input(hint):
     user_bubble(chat.Turn(person, prompt))
-    turn = world.send(person, prompt)
-    st.session_state.log.append(("turn", turn))  # logged before the animation: a rerun mid-way still keeps the turn
-    play(turn)
+    play(person, prompt)

@@ -1,8 +1,13 @@
 # demo/ — chat demo (owner: M4)
 
+Runs on the real models only, on the Brev GPU instance (infra/README.md):
+
 ```bash
-pip install -e ".[demo]"
-bash demo/run.sh        # offline: fooled test model + code-only checkers, HF offline, no telemetry, dark theme
+# on the instance, after `MODEL=Qwen/Qwen3-8B BRANCH=<branch> MEMSHIELD_REPO=<hf user>/<repo> bash brev_setup.sh`
+cd ~/workspace/MemLedger && export HF_HOME=~/workspace/hf-cache
+bash demo/run.sh                                   # agent: Qwen3-8B on vLLM :8000; checkers: HF models on cuda
+# on the laptop
+ssh -L 8501:localhost:8501 <instance>              # then open http://localhost:8501
 ```
 
 You use it the way a person uses the assistant: through the chat box. In the sidebar pick **who you are** (the
@@ -33,8 +38,14 @@ How it is built: `chat.py` holds one `World` per chat: a `LedgerService` from M1
 `full` = on) loaded with the starting notes, the agent's tools (two web pages, payments, email; Acme Ltd and the lab
 report address in the signed registry) and M3's agent loop. Each chat message is ingested as a `user` source first,
 so the input screen sees it and anything remembered from it cites it. The insider's SQL runs straight on the database
-file. The agent is `chat.FooledModel`, a deterministic model that understands plain requests (read, remember, pay,
-email, answer) and believes everything it reads, so the outcome depends only on the memory layer; set
-`MEMLEDGER_LLM_URL` (and `MEMLEDGER_LLM_MODEL`) to use a real model instead. `app.py` is layout only.
-Tests: `tests/demo/` (every attack: harmful off, prevented on). `scenario.py` is the older tabbed demo's logic, still
-used by `web/`. Presenter script: [`DEMO_SCRIPT.md`](DEMO_SCRIPT.md).
+file. Only real models run: the agent is the LLM at `MEMLEDGER_LLM_URL` (Qwen3-8B, the eval's model, through the
+eval client: temperature 0, fixed seed, thinking off) and the checkers are the Hugging Face models
+(`MEMLEDGER_GUARD_BACKEND=hf`: MiniCheck, DeBERTa NLI, the injection classifier, memshield from `models/memshield`).
+The app refuses to start without them. Everything on screen is a presentation wrapper over what they did: the
+plan/result lines are the run's tool records; the MemLedger lines and "What MemLedger did" come from the service's
+write verdicts, status log, approval queue and its own retriever + access filter; the red/green verdict compares
+the outcome with the signed registry and the attackers' markers (like `attacks/oracle.py`). A real model may not
+take every bait: what you see is what it did. `app.py` is layout only.
+Tests: `tests/demo/` swap in a deterministic stand-in model (`tests/demo/fooled.py`) and the code-only checkers, so
+CI checks every attack (harmful off, prevented on) without a GPU. `scenario.py` is the older tabbed demo's logic,
+still used by `web/`. Presenter script: [`DEMO_SCRIPT.md`](DEMO_SCRIPT.md).

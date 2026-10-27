@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+import streamlit as st
 
 from demo import chat
 
@@ -44,3 +45,13 @@ def test_insider_sql_and_reset():
     assert not at.exception and "19% recall" in html(at) and "Harmful action carried out" in html(at)
     next(b for b in at.button if b.label.startswith("Reset")).click().run()
     assert "Harmful action carried out" not in html(at)
+
+
+def test_without_the_real_models_the_app_says_so(monkeypatch):
+    def missing():
+        raise RuntimeError("no agent LLM")
+
+    monkeypatch.setattr(chat, "default_llm", missing)
+    st.cache_resource.clear()  # the app keeps its LLM for the server's lifetime
+    at = st_testing.AppTest.from_file(APP, default_timeout=60).run()
+    assert not at.exception and "real models are not available" in at.error[0].value and not at.chat_input

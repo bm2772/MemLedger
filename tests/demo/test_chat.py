@@ -1,4 +1,5 @@
 import pytest
+from fooled import FooledModel
 
 from demo import chat
 
@@ -67,7 +68,7 @@ def test_insider_sql_bad_statement_is_reported():
 
 
 def test_fooled_model_understands_plain_requests():
-    llm = chat.FooledModel()
+    llm = FooledModel()
 
     def ask(task, mems=""):
         return llm.complete([{"role": "system", "content": ""},

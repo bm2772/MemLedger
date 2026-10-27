@@ -1,6 +1,7 @@
 # Demo script (chat demo) — owner M4
 
-Setup (no Wi-Fi needed): `bash demo/run.sh`, browser at http://localhost:8501, full screen (F11), zoom 100%.
+Setup: on the Brev instance `bash demo/run.sh`; on the laptop `ssh -L 8501:localhost:8501 <instance>`, browser at
+http://localhost:8501, full screen (F11), zoom 100%. Needs the network: keep the recorded video as the fallback.
 Keep the sidebar open: **You are** (who is typing), **MemLedger protection**, **Reset memory and chat**, and
 **Prompts to try** (copy buttons). Fallback: the recorded video. If anything misbehaves on stage, switch to it.
 
