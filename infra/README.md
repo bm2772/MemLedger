@@ -3,7 +3,7 @@
 | File | What |
 |---|---|
 | `Dockerfile` | Python 3.11 + vLLM + transformers + sentence-transformers; default CMD serves the main model |
-| `brev_setup.sh` | Idempotent bootstrap: clone repo into `/home/ubuntu/workspace`, venv, data, suite, memshield fine-tune, start vLLM on `:8000` |
+| `brev_setup.sh` | Idempotent bootstrap: clone repo into `~/workspace` (`$WORKSPACE`), venv, data, suite, memshield fine-tune, start vLLM on `:8000` |
 | `cost_logger.py` | Appends one row per GPU session to `budget.csv`; `TokenMeter` counts tokens from responses |
 | `budget.csv` | The ledger of every Brev session (committed; no secrets in it) |
 
@@ -23,9 +23,9 @@ curl -fsSL https://raw.githubusercontent.com/bm2772/MemLedger/integration/v1/inf
 sudo shutdown -h +300                              # backstop: never leave the GPU running
 # memshield: use Ahan's model (docs/results/memshield.md, threshold 0.990), not a new fine-tune (different weights and
 # threshold): MEMSHIELD_REPO=<hf user>/<repo> downloads it from the Hugging Face Hub, or copy it before setup with
-#   (on the Mac) scp -r models/memshield ubuntu@<instance>:/home/ubuntu/workspace/MemLedger/models/
+#   (on the Mac) scp -r models/memshield <instance>:~/workspace/MemLedger/models/
 MODEL=Qwen/Qwen3-8B BRANCH=integration/v1 MEMSHIELD_REPO=<hf user>/<repo> bash brev_setup.sh  # setup ... memshield, vLLM
-export HF_HOME=/home/ubuntu/workspace/hf-cache && cd /home/ubuntu/workspace/MemLedger
+export HF_HOME=~/workspace/hf-cache && cd ~/workspace/MemLedger
 # 2. smoke: 1 episode per family x 5 versions; must print no "WARNING: ... episodes errored"
 make eval-brev-smoke
 # 3. the run (16 parallel episodes, resumable: re-run the same command after a crash)
@@ -53,7 +53,7 @@ sudo shutdown -h now
 1. **Stop the instance the moment a job finishes.** No idle GPUs overnight, over meals or "in case".
 2. **Never start a GPU for something that runs on CPU** (unit tests, the mock baseline, metrics, report, demo dev).
 3. **Export results before stopping**: `results/` summaries go into git; raw JSONL is copied off the box
-   (`scp`/`rsync`) — it is gitignored. Model weights stay in `/home/ubuntu/workspace/hf-cache`, never in git.
+   (`scp`/`rsync`) — it is gitignored. Model weights stay in `~/workspace/hf-cache`, never in git.
 4. **Log every session immediately after stopping**, even short ones:
    `python infra/cost_logger.py session --member M4 --instance <name> --gpu <type> --hours <h> --rate <$/h> --purpose "<job>"`
    then `python infra/cost_logger.py summary`. Tokens come from the runner's `TokenMeter` totals.

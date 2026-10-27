@@ -429,6 +429,18 @@ def create_app(data_dir: str | Path | None = None, auth: Auth | None = None,
 
         return sc.tamper_demo(body.edit)
 
+    tour_cache: dict[str, dict] = {}
+
+    @app.get("/api/tour")
+    def tour(_: Me, fresh: bool = False):
+        """The story on fresh in-memory services (web/tour.py); no workspace is touched. Cached per server (with the
+        hf checkers a play is many model calls); ?fresh=true plays it again (the page's Replay)."""
+        from web import tour as t
+
+        if fresh or "play" not in tour_cache:
+            tour_cache["play"] = {**t.play(models), "backend": backend}
+        return tour_cache["play"]
+
     @app.get("/api/results")
     def results(_: Me):
         md = ROOT / "docs" / "results.md"
