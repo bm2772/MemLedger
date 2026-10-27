@@ -54,7 +54,7 @@ CLAIMS: list[tuple[str, str, tuple]] = [
      ("test", "tests/guards/test_hallucination.py::test_made_up_number_rejected")),
 ]
 NOT_YET = ["Attribution accuracy (leave-one-out)", "Trust calibration error (ECE)",
-           "Detection F1 on RAGTruth / HaluEval / planted conflicts", "Update accuracy", ("Clean-up recall and "
+           "Detection F1 on planted conflicts", "Update accuracy", ("Clean-up recall and "
            "false quarantine rate on attack sets"), "Injection precision/recall on BIPIA test, InjecAgent, AgentDojo",
            "I7 (latency independence, KS test) and I8 (deletion)", "8 attack types × 6 access paths coverage matrix"]
 
@@ -113,7 +113,9 @@ def render(summary: dict) -> str:
             out.append(f"| {slide} | {claim} | `{key}` on `{version}`: {_rate(r)} | {_status(goal, m, version, key)} |")
         else:
             out.append(f"| {slide} | {claim} | `{ev[1]}` | test (passes in CI) |")
-    out += ["", "**Not measured yet** (future work unless added before 27 Oct): " + "; ".join(NOT_YET) + ".", "",
+    out += ["", ("Hallucination check on its own (RAGTruth, HaluEval QA; no agent): "
+            "[docs/results/hallucination_benchmarks.md](results/hallucination_benchmarks.md)."),
+            "", "**Not measured yet** (future work unless added before 27 Oct): " + "; ".join(NOT_YET) + ".", "",
             "Manifests (what each version had switched on):", ""]
     for v, man in summary["manifests"].items():
         flags = [k for k in ("input_screen", "access_control", "action_gate", "registry") if man.get(k)]
