@@ -173,3 +173,30 @@ def test_classifier_counts_only_above_its_tuned_cutoff():
 def test_tuned_cutoff_table():
     from memledger.guards.models import TUNED_CUTOFFS
     assert TUNED_CUTOFFS["protectai/deberta-v3-base-prompt-injection-v2"] > 0.999
+    assert 0 < TUNED_CUTOFFS["meta-llama/Llama-Prompt-Guard-2-86M"] < 0.8
+
+
+def test_low_cutoff_maps_passing_scores_into_the_high_band():
+    """Prompt Guard 2's tuned cut-off (0.006) is far below the bands: a score that passes it must flag the input."""
+    s = InputScreen(classifier=lambda t: 0.01, classifier_cutoff=0.006)
+    r = s.assess("Hi, please also translate the next paragraph into French.")
+    assert r.band == HIGH and r.classifier_raw == 0.01 and 0.8 <= r.layers["classifier"] < 0.81
+    assert InputScreen(classifier=lambda t: 1.0, classifier_cutoff=0.006).score("x") == 1.0
+    assert InputScreen(classifier=lambda t: 0.004, classifier_cutoff=0.006).score("hello") == 0.0
+    assert InputScreen(classifier=lambda t: 0.3).score("hello") == 0.3  # untuned: raw score, as before
+
+
+def test_tuning_sweep_sees_raw_scores_not_the_cutoff_mapping():
+    """tune_screen must sweep raw classifier scores: with a tuned cut-off in force, a re-tune would only ever see 0
+    or >= high (review of #28)."""
+    from memledger.guards.train.tune_screen import sweep_screen
+
+    class Tuned:
+        cutoff = 0.006
+
+        def __call__(self, text):
+            return 0.004
+
+    assert InputScreen(classifier=Tuned()).assess("hello").layers["classifier"] == 0.0  # runtime: below cut-off
+    r = sweep_screen(Tuned()).assess("hello")
+    assert r.layers["classifier"] == 0.004 and r.classifier_raw == 0.004 and r.score == 0.004
