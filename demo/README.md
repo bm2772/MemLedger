@@ -1,10 +1,9 @@
-# demo/ — Streamlit demo (owner: M4, slide 24 Figure 7)
+# demo/ — Streamlit demo
 
 ```bash
 pip install -e ".[demo]"
 bash demo/run.sh        # offline: fake fooled model + lexical checkers, HF offline, no telemetry
 ```
-3-minute presenter script: [`DEMO_SCRIPT.md`](DEMO_SCRIPT.md).
 
 | Tab | Shows | Mechanism |
 |---|---|---|

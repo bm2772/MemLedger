@@ -1,4 +1,4 @@
-"""Shared data types. Frozen on day 1: changes need M1's approval (see CLAUDE.md)."""
+"""Shared data types. Shared by every module (docs/interfaces.md)."""
 
 from __future__ import annotations
 

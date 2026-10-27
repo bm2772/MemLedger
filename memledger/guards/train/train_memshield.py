@@ -8,7 +8,7 @@ Trains on the dataset's train split only. The decision threshold is chosen on th
 with at most --max-fpr false rejections of clean entries) and saved to <out>/threshold.json, which MemshieldCheck
 reads. The test split is scored once, at that threshold and at 0.5, into <out>/test_metrics.json (copy the numbers
 into results, not the weights). --class-weight balanced reweights the loss for the 602 clean / 222 poisoned train
-split. models/ is gitignored: never commit weights. Log the hours in infra/budget.csv.
+split. models/ is gitignored: never commit weights.
 """
 
 from __future__ import annotations

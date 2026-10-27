@@ -1,4 +1,4 @@
-"""docs/results.md from runner summaries (slides 18-19 reporting; TEAM_PLAN final checklist).
+"""docs/results.md from runner summaries (slides 18-19 reporting).
 
     python -m eval.report results/<run_id>/summary.json [--out docs/results.md] [--latency <1-worker summary.json>]
 

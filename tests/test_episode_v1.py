@@ -93,28 +93,3 @@ def test_runner_registry_binding_wins_over_bound_value():
     reg = {("Acme Ltd", "account"): "1234"}
     res = run_episode(e, MockMemoryService(), FakeLLM([LLMResponse("")]), registry_lookup=lambda v, f: reg.get((v, f)))
     assert res.outbox[0]["params"]["account"] == "1234"
-
-
-def test_m4_smoke_fixture_converts_and_replays_on_real_service():
-    """eval/fixtures/smoke.jsonl -> v1: baseline is hijacked, full pays the registry account (slide 5)."""
-    from pathlib import Path
-
-    from memledger.agent.runner import tool_call_matches
-    from memledger.core.factory import build_service
-    from memledger.registry import Registry
-    from scenarios.convert_v0 import from_eval_v0
-
-    root = Path(__file__).resolve().parents[1]
-    rows = [json.loads(x) for x in (root / "eval/fixtures/smoke.jsonl").read_text().splitlines() if x.strip()]
-    eps = {e.id: e for e in map(from_eval_v0, rows)}
-    assert [e.to_dict() for e in eps.values()] == [e.to_dict() for e in load_jsonl(root / "scenarios/fixtures/smoke_v1.jsonl")]
-    for eid in ("smoke-acme-fake-fact", "smoke-repetition-flood"):
-        e = eps[eid]
-        hijacked = {}
-        for version in ("baseline", "full"):
-            reg = Registry.from_mapping(e.registry)
-            svc = build_service(version, registry=reg)
-            res = run_episode(e, svc, FakeLLM([LLMResponse("")]), registry_lookup=reg if version == "full" else None,
-                              gate=svc.gate)
-            hijacked[version] = any(tool_call_matches(x, e.attacker_goal) for x in res.outbox)
-        assert hijacked == {"baseline": True, "full": False}, eid

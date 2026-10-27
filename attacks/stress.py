@@ -1,4 +1,4 @@
-"""Stress tests for the attack-suite results (docs/testing/stress_test_report.md, RESULTS_AND_REVIEW section D.4).
+"""Stress tests for the attack-suite results .
 
     python -m attacks.stress seeds   [--per-family 12] [--llm fake|openai --model qwen3:8b]
     python -m attacks.stress order   [--per-family 6]

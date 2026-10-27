@@ -188,7 +188,7 @@ def test_train_helpers():
     assert m["precision"] == m["recall"] == m["f1"] == m["accuracy"] == 0.5
 
 
-# ---- issue 1 (docs/testing/local_run_2026-10-23.md): NLI says 1.00 for template-similar facts -------------------
+# ---- issue 1 (local run, 23 Oct): NLI says 1.00 for template-similar facts -------------------
 def deberta_like(a, b):
     """What the real cross-encoder returned for every pair in the report: P(contradiction) = 1.00."""
     return {"contradiction": 1.0, "neutral": 0.0, "entailment": 0.0}
