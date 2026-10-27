@@ -18,7 +18,8 @@ TORCH = ["*.json", "*.txt", "*.model", "*.safetensors", "pytorch_model.bin"]
 # (model id, allow_patterns, gated)
 MODELS: list[tuple[str, list[str] | None, bool]] = [
     ("lytang/MiniCheck-RoBERTa-Large", TORCH, False),  # hallucination check; weights are pytorch_model.bin
-    ("cross-encoder/nli-deberta-v3-base", TORCH, False),  # contradiction check
+    # contradiction check; safetensors only (the repo also ships pytorch_model.bin, the same 1.7 GB again)
+    ("MoritzLaurer/DeBERTa-v3-large-mnli-fever-anli-ling-wanli", ["*.json", "*.txt", "*.model", "*.safetensors"], False),
     ("protectai/deberta-v3-base-prompt-injection-v2", TORCH, False),  # input screen layer 3
     ("BAAI/bge-m3", [*TORCH, "1_Pooling/*"], False),  # embeddings (sentence-transformers)
     ("meta-llama/Llama-Prompt-Guard-2-86M", TORCH, True),  # gated: accept the licence on huggingface.co first
