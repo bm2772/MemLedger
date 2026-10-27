@@ -30,7 +30,7 @@ DELAY = float(os.environ.get("DEMO_DELAY", "0.6"))
 st.set_page_config(page_title="MemLedger chat demo", page_icon="🛡️", layout="centered")
 st.markdown("""
 <style>
-  .block-container { padding-top: 1.6rem; max-width: 860px; }
+  .block-container { padding-top: 1.6rem; max-width: 54rem; }
   .ml-head { display: flex; align-items: baseline; gap: .6rem; margin-bottom: .2rem; }
   .ml-head h1 { font-size: 1.7rem; margin: 0; }
   .ml-head span { color: #8b949e; font-size: .95rem; }
@@ -98,7 +98,7 @@ def show(item) -> None:
             with st.chat_message("user", avatar=m.avatar or "🧑"):
                 st.markdown(f'<div class="ml-who">{esc(m.who)}</div>{esc(m.text)}', unsafe_allow_html=True)
         elif m.role == "agent":
-            with st.chat_message("assistant", avatar="🤖"):
+            with st.chat_message("assistant", avatar=":material/smart_toy:"):
                 st.markdown(f'<div class="ml-who">Agent</div>{esc(m.text)}', unsafe_allow_html=True)
         elif m.role == "guard":
             with st.chat_message("assistant", avatar="🛡️"):

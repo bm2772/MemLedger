@@ -6,4 +6,4 @@ cd "$(dirname "$0")/.."
 export MEMLEDGER_GUARD_BACKEND=${MEMLEDGER_GUARD_BACKEND:-lexical}
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 exec "${PYTHON:-.venv/bin/python}" -m streamlit run demo/app.py --browser.gatherUsageStats false \
-  --server.headless true --theme.base dark "$@"
+  --server.headless true --theme.base dark --theme.primaryColor "#2ea043" --client.toolbarMode viewer "$@"
