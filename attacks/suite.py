@@ -51,6 +51,12 @@ FAMILY_SIZES = {"agentpoison": 60, "poisonedrag": 60, "minja": 60, "summary_laun
 # (benchmark, splits it may be used for); InjecAgent and AgentDojo are test only (CLAUDE.md)
 BENCHMARKS = [("memshield", SPLITS), ("memevobench", SPLITS), ("bipia", SPLITS),
               ("injecagent", ("test",)), ("agentdojo", ("test",))]
+# Test-split sample per benchmark (None = all); dev keeps SuiteConfig.bench_limit because it is used for tuning. The
+# unit is the loader's: memshield poisoned entries (and as many clean), MemEvoBench items, BIPIA documents, InjecAgent
+# attack cases (each with a clean twin), AgentDojo (injection task, user task) pairs. Test then has memshield 179,
+# MemEvoBench 166, BIPIA 300, InjecAgent 600 and AgentDojo 230 episodes (was 80/80/80/80/15 with 40 each).
+TEST_BENCH_LIMITS: dict[str, int | None] = {"memshield": None, "memevobench": None, "bipia": None,
+                                            "injecagent": 300, "agentdojo": 230}
 
 
 @dataclass
@@ -58,10 +64,14 @@ class SuiteConfig:
     dev_worlds: int = 3  # 72 episodes per world with the default scenario Config
     test_worlds: int = 3
     n_teams: int = 3
-    bench_limit: int = 40  # per benchmark and split
+    bench_limit: int = 40  # per benchmark on dev (and on test for a benchmark missing from test_bench_limits)
     seed: int = 0
     benchmarks: list[str] = field(default_factory=lambda: [b for b, _ in BENCHMARKS])
     family_sizes: dict[str, int] = field(default_factory=lambda: dict(FAMILY_SIZES))  # episodes per family and split
+    test_bench_limits: dict[str, int | None] = field(default_factory=lambda: dict(TEST_BENCH_LIMITS))
+
+    def limit(self, name: str, split: str) -> int | None:
+        return self.test_bench_limits.get(name, self.bench_limit) if split == "test" else self.bench_limit
 
 
 DEFAULT_ORACLE = {"fake_fact": "tool_call", "cross_team": "canary", "clearance": "canary"}  # scenario categories
@@ -104,7 +114,7 @@ def benchmark_episodes(split: str, cfg: SuiteConfig, root: str | Path | None = N
         if name not in cfg.benchmarks or split not in allowed:
             continue
         try:
-            eps = load(name, split=split, limit=cfg.bench_limit, seed=cfg.seed, root=root)
+            eps = load(name, split=split, limit=cfg.limit(name, split), seed=cfg.seed, root=root)
         except (FileNotFoundError, ImportError) as e:
             skipped[name] = str(e).splitlines()[0]
             continue
@@ -144,14 +154,18 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--out", default="data/attacks")
     p.add_argument("--dev-worlds", type=int, default=3)
     p.add_argument("--test-worlds", type=int, default=3)
-    p.add_argument("--bench-limit", type=int, default=40)
+    p.add_argument("--bench-limit", type=int, default=40, help="per benchmark on dev")
+    p.add_argument("--test-bench-limit", type=int,
+                   help="one limit for every benchmark on test (default: TEST_BENCH_LIMITS; 40 = the old suite)")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--family-scale", type=float, default=1.0, help="scale the per-family episode counts")
     p.add_argument("--manifest", help="also copy manifest.json here (committed, e.g. docs/results/suite_manifest.json)")
     a = p.parse_args(argv)
     sizes = {k: max(1, round(v * a.family_scale)) for k, v in FAMILY_SIZES.items()}
+    test_limits = dict(TEST_BENCH_LIMITS) if a.test_bench_limit is None else \
+        {name: a.test_bench_limit for name in TEST_BENCH_LIMITS}
     report = write(a.out, SuiteConfig(a.dev_worlds, a.test_worlds, bench_limit=a.bench_limit, seed=a.seed,
-                                      family_sizes=sizes))
+                                      family_sizes=sizes, test_bench_limits=test_limits))
     if a.manifest:
         Path(a.manifest).parent.mkdir(parents=True, exist_ok=True)
         Path(a.manifest).write_text(json.dumps(report, indent=1) + "\n")

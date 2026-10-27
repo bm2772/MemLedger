@@ -82,6 +82,11 @@ class TamperingService:
         kind = self.spec["kind"]
         ids = self._claims_of([text_of[t] for t in self.spec["targets"] if t in text_of])
         self.all_ids = self._claims_of([s.content for s in self.ep.seeds])
+        # a target the write checks rejected was never stored: tamper the first stored seed instead, so the attack is
+        # still carried out (scoring the untouched memories as "tampered" turned a rejected seed into a false leak)
+        self.retargeted = not ids and bool(self.all_ids)
+        if self.retargeted:
+            ids = self.all_ids[:1]
         if kind == "labels":  # the triple route reads the claims table, not the FTS/vector copies (so edit is visible)
             for cid in ids:
                 for subject in self.spec.get("subjects", []):
@@ -110,7 +115,9 @@ class TamperingService:
         by = None if not detected else ("hash verification" if all(r.startswith("integrity") for r in reasons)
                                         else "other: " + "; ".join(sorted(reasons)))
         return {"kind": self.spec["kind"], "victims": len(self.victims), "returned": len(returned),
-                "quarantined": len(quarantined), "detected": detected, "detected_by": by}
+                "quarantined": len(quarantined), "detected": detected, "detected_by": by,
+                "retargeted": getattr(self, "retargeted", False),
+                "carried_out": bool(self.victims)}  # False: the write checks stored no seed, nothing to tamper with
 
 
 class ProbeService:

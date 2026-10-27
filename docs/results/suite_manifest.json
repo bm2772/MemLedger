@@ -29,12 +29,12 @@
   }
  },
  "test": {
-  "n": 1075,
-  "sha256": "ac317a35166c8eee0cf994b2728041ca470b834d692e6ec24fe765d4887f8cd7",
+  "n": 2215,
+  "sha256": "3a5cac903bb5b1f17c63003b66f5e65d37ccca597d75c56271eb53f115fc6b60",
   "skipped": {},
   "by_kind": {
-   "clean": 256,
-   "attack": 819
+   "clean": 759,
+   "attack": 1456
   },
   "by_family": {
    "agentpoison": 60,
@@ -44,19 +44,19 @@
    "isolation": 108,
    "isolation_matrix": 144,
    "minja": 60,
-   "planted_doc": 80,
+   "planted_doc": 300,
    "poisonedrag": 60,
-   "poisoning": 160,
+   "poisoning": 345,
    "repetition_flooding": 64,
    "summary_laundering": 64,
-   "tool_hijack": 95
+   "tool_hijack": 830
   },
   "by_source": {
-   "agentdojo": 15,
-   "bipia": 80,
-   "injecagent": 80,
-   "memevobench": 80,
-   "memshield": 80,
+   "agentdojo": 230,
+   "bipia": 300,
+   "injecagent": 600,
+   "memevobench": 166,
+   "memshield": 179,
    "scenario": 740
   }
  }
