@@ -39,6 +39,8 @@
 1. **MemEvoBench is not defended.** Misleading memories pass every check (41% vs 42.2% on plain memory), and 12.7% of its clean memories are rejected. The large memshield did better on the earlier 40-item sample, but that model is not the headline (`final_run_2026-10-26.md`).
 2. **Prompt Guard 2's low cut-off over-blocks BIPIA.** 8.7% of clean BIPIA emails are quarantined, and BIPIA clean-task accuracy falls from 77.4% to 69.4%. That is most of the 4.2-point overall accuracy cost (88.2% → 84.0%). The cut-off (0.006, PR #28) was tuned on BIPIA train for ≤ 5% false alarms; on the test emails it gives 8.7%.
 3. **Harmless writes rejected: 5.6%,** just over the 5% target (slide 19: not met).
+4. **Contradiction detection can flag unrelated facts about the same subject.** Both NLI models give P(contradiction) ≈ 0.99 to pairs such as "Kestrel reaches 91% recall on Saltmarsh" vs "Kestrel runs on the Orion cluster". `same_subject` matches only the subject, and the check takes the direction with the higher score. Planned after v1.0 (M2, on dev): require both directions to pass, and add a same-attribute match.
+5. **Prompt Guard 2's cut-off is kept at 0.006 as tuned.** It was chosen on BIPIA train for ≤ 5% false alarms and gives 8.7% on BIPIA test. Re-tuning it because of the test result would be tuning on test, so the gap is reported as it is. A likely fix after v1.0: use the screen's mid band ("allowed but untrusted"). Today every input scoring ≥ 0.5 is quarantined (`LedgerService.ingest`).
 
 ## Prompt Guard 2 vs ProtectAI (dev split, `full`; chosen on dev only)
 
