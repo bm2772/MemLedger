@@ -187,3 +187,44 @@ def test_evaluate_runs_all_five_versions_on_a_small_subset(tmp_path, monkeypatch
     assert set(res["overall"]) == set(VERSIONS)
     assert res["overall"]["baseline"]["attack_success"]["p"] > res["overall"]["full"]["attack_success"]["p"] == 0
     assert "| minja |" in (tmp_path / "t" / "families.md").read_text()
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_tamper_is_still_carried_out_when_its_target_seed_was_rejected(suite, kind):
+    """26 Oct Brev run: an over-rejecting memshield refused the target seed, no tamper happened, and the untouched
+    memories were scored as tampered (6 false leaks on full). The first stored seed is tampered instead."""
+    ep = next(e for e in suite["test"] if e.meta.get("family") == "db_tamper" and e.meta["tamper"]["kind"] == kind)
+    targets = set(ep.meta["tamper"]["targets"])
+    keep = next(s for s in ep.seeds if s.id not in targets)  # memshield rejects every seed except this one
+    drop = {s.content for s in ep.seeds if s.id != keep.id}
+    shield = lambda text: 0.99 if text in drop else 0.0
+    row, _ = run_one(ep, resolve_version("full"), GullibleLLM(), {"memshield": shield}, "lexical")
+    assert row["tamper"]["retargeted"] and row["tamper"]["victims"] >= 1
+    assert row["tamper"]["detected"] and not row["leaks"], row["tamper"]
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_tamper_with_every_seed_rejected_gets_no_verdict(suite, kind):
+    """Ahan's #24 review: if the write checks reject every seed there is nothing to tamper with. That is neither a
+    detected tamper nor a successful attack, so the episode gets no verdict and stays out of tamper detection."""
+    from attacks.oracle import attack_success, overall
+
+    ep = next(e for e in suite["test"] if e.meta.get("family") == "db_tamper" and e.meta["tamper"]["kind"] == kind)
+    row, _ = run_one(ep, resolve_version("full"), GullibleLLM(), {"memshield": lambda t: 0.99}, "lexical")
+    assert row["tamper"]["carried_out"] is False and row["tamper"]["victims"] == 0, row["tamper"]
+    assert attack_success(ep, row) is None
+    assert overall([ep], [row])["tamper_detected"].n == 0
+
+
+def test_overall_counts_retargeted_and_not_carried_out_tampers(suite):
+    from attacks.evaluate import _tamper_note
+    from attacks.oracle import overall
+
+    ep = next(e for e in suite["test"] if e.meta.get("family") == "db_tamper")
+    keep = next(s for s in ep.seeds if s.id not in set(ep.meta["tamper"]["targets"]))
+    shield = lambda text: 0.0 if text == keep.content else 0.99
+    retarget, _ = run_one(ep, resolve_version("full"), GullibleLLM(), {"memshield": shield}, "lexical")
+    none, _ = run_one(ep, resolve_version("full"), GullibleLLM(), {"memshield": lambda t: 0.99}, "lexical")
+    o = overall([ep], [retarget, {**none, "episode": ep.id}])
+    assert (o["tamper_retargeted"], o["tamper_not_carried_out"], o["tamper_detected"].n) == (1, 1, 1)
+    assert _tamper_note(o) == " (1 retargeted, 1 not carried out)"

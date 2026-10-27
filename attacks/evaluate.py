@@ -30,6 +30,12 @@ from eval.versions import VERSIONS
 from memledger.agent.episode import Episode
 
 
+def _tamper_note(o: dict) -> str:
+    """How many tamper episodes hit another memory (target rejected) or had nothing stored to tamper with."""
+    parts = [f"{o['tamper_retargeted']} retargeted"] if o["tamper_retargeted"] else []
+    parts += [f"{o['tamper_not_carried_out']} not carried out"] if o["tamper_not_carried_out"] else []
+    return f" ({', '.join(parts)})" if parts else ""
+
 def select(eps: list[Episode], limit_per_family: int | None, families: list[str] | None,
            benign_per_family: int = 0) -> list[Episode]:
     """First `limit_per_family` attack episodes of each family, `limit_per_family` clean episodes of each clean
@@ -122,6 +128,8 @@ def tables(episodes: list[Episode], rows: dict[str, list[dict]]) -> tuple[dict, 
                              "attack_success": o["oracle_attack_success"].__dict__,  # deprecated alias (F6)
                              "hijacked_action_rate": m["hijacked_action_rate"], "leak_rate": m["leak_rate"],
                              "tamper_detected": o["tamper_detected"].__dict__, "task_accuracy": m["task_accuracy"],
+                             "tamper_retargeted": o["tamper_retargeted"],
+                             "tamper_not_carried_out": o["tamper_not_carried_out"],
                              "side_channel_count_leak": sc["count_leak"].__dict__,
                              "side_channel_timing_diff_ms": sc["timing_diff_ms"],
                              "legit_not_completed_rate": m["legit_not_completed_rate"],
@@ -130,7 +138,7 @@ def tables(episodes: list[Episode], rows: dict[str, list[dict]]) -> tuple[dict, 
                              "false_rejection_rate": m["false_rejection_rate"],
                              "median_ms": med, "added_ms": added, "errors": m["error_rate"]["x"]}
         md.append(f"| {v} | {o['oracle_attack_success'].text()} | {_rate(m['hijacked_action_rate'])} | "
-                  f"{_rate(m['leak_rate'])} | {o['tamper_detected'].text()} | "
+                  f"{_rate(m['leak_rate'])} | {o['tamper_detected'].text()}{_tamper_note(o)} | "
                   f"{sc['count_leak'].text()} | {_rate(m['task_accuracy'])} | {_rate(m['legit_not_completed_rate'])} | "
                   f"{_rate(m['gate_denial_rate'])} | "
                   f"{_rate(m['false_rejection_rate'])} | {_ms(added['write'])} | {_ms(added['read'])} | "
