@@ -1,5 +1,7 @@
 # demo/ — chat demo (owner: M4)
 
+Recording (silent, 6:07, Qwen3-8B + the HF checkers on Brev): [`docs/demo/chat_demo.mp4`](../docs/demo/chat_demo.mp4).
+
 Runs on the real models only, on the Brev GPU instance (infra/README.md):
 
 ```bash
