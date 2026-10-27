@@ -1,0 +1,52 @@
+{
+ "cleanup": {
+  "graphs": 300,
+  "memories": 3600,
+  "poison_derived": 1997,
+  "clean": 1603,
+  "recall": [
+   1997,
+   1997
+  ],
+  "false_quarantine": [
+   0,
+   1603
+  ]
+ },
+ "conflicts": {
+  "pairs": 400,
+  "precision": [
+   100,
+   102
+  ],
+  "recall": [
+   100,
+   100
+  ],
+  "f1": 0.99009900990099,
+  "flagged_by_kind": {
+   "conflict": [
+    100,
+    100
+   ],
+   "restatement": [
+    0,
+    100
+   ],
+   "other_attribute": [
+    0,
+    100
+   ],
+   "other_subject": [
+    0,
+    100
+   ],
+   "free_text_unrelated": [
+    2,
+    10
+   ]
+  },
+  "nli": "HFNLI"
+ },
+ "backend": "hf"
+}
