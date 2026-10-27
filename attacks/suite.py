@@ -48,7 +48,7 @@ FAMILY.update({name: name for name in FAMILIES})
 DEV_SEED0, TEST_SEED0 = 0, 10_000  # per-family generator seeds; the ranges never overlap
 FAMILY_SIZES = {"agentpoison": 60, "poisonedrag": 60, "minja": 60, "summary_laundering": 64, "repetition_flooding": 64,
                 "db_tamper": 72, "isolation_matrix": 144}  # per split; multiples of the variant count (>= 500 in all)
-# (benchmark, splits it may be used for); InjecAgent and AgentDojo are test only (CLAUDE.md)
+# (benchmark, splits it may be used for); InjecAgent and AgentDojo are test only (never tuned on)
 BENCHMARKS = [("memshield", SPLITS), ("memevobench", SPLITS), ("bipia", SPLITS),
               ("injecagent", ("test",)), ("agentdojo", ("test",))]
 # Test-split sample per benchmark (None = all); dev keeps SuiteConfig.bench_limit because it is used for tuning. The

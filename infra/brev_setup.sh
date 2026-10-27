@@ -10,7 +10,7 @@
 # Then:   make eval-brev-smoke && make eval-brev        (infra/README.md "Final run")
 # The checker models share the GPU with vLLM: GPU_UTIL (default 0.80) leaves them room; use a 40 GB+ GPU (L40S/A100).
 # Qwen3: send {"think": false} / chat_template_kwargs {"enable_thinking": false} with every request; with thinking
-# on, each call is ~30x slower (docs/testing/local_run_2026-10-23.md).
+# on, each call is ~30x slower.
 # STOP THE INSTANCE when done (see infra/README.md) and log the session with infra/cost_logger.py.
 set -euo pipefail
 

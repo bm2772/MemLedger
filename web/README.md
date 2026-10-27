@@ -1,6 +1,6 @@
-# web/ — MemLedger console (owner: M3)
+# web/ — MemLedger console
 
-A product UI for MemLedger. It is separate from `demo/` (M4's Streamlit slide demo), which stays unchanged. The console
+A product UI for MemLedger. It is separate from `demo/` (the Streamlit demo). The console
 is a FastAPI server over `LedgerService` (`web/api.py`) plus a React + TypeScript app (`web/ui`, built with Vite).
 
 ```bash

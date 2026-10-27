@@ -1,4 +1,4 @@
-"""Stress-test checks (docs/testing/stress_test_report.md): independent recomputation of the tables, determinism under
+"""Stress-test checks: independent recomputation of the tables, determinism under
 re-ordering, oracle edge cases."""
 
 import json

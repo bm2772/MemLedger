@@ -6,7 +6,7 @@
 Splits: official ones are used where they exist (BIPIA train/test, memshield train/validation/test, RAGTruth
 train/test, LLM-AggreFact dev/test); "dev" maps to the official tuning split. Datasets without one are split by a
 stable hash of the item id (30% dev / 70% test), by conversation for LoCoMo so no dialogue is in both. InjecAgent and
-AgentDojo are test-only (CLAUDE.md: never used for tuning). Subsets are a seeded sample of size `limit`, spread
+AgentDojo are test-only (never used for tuning). Subsets are a seeded sample of size `limit`, spread
 over the benchmark's attack types.
 
 The attack benchmarks (memshield, MemEvoBench, BIPIA, InjecAgent, AgentDojo) are adapted to agent episodes with an

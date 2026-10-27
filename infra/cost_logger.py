@@ -1,4 +1,4 @@
-"""Brev GPU cost + token logger (M4 owns the $1,000 budget, docs/TEAM_PLAN.md).
+"""Brev GPU cost + token logger ($1,000 Brev budget).
 
 Every GPU session gets one row in infra/budget.csv (hours, dollars, tokens served). TokenMeter counts tokens from
 OpenAI-compatible responses (vLLM / Ollama) so runs can report tokens next to dollars.

@@ -153,7 +153,7 @@ def test_low_trust_claim_that_supplied_a_param_waits_for_approval_then_runs_once
 
 
 def test_contested_but_irrelevant_memories_do_not_block_registry_bound_payment():
-    """Issue 2 (docs/testing/local_run_2026-10-23.md): Ctx(a) = claims that supplied parameter values only."""
+    """Issue 2 (local run, 23 Oct): Ctx(a) = claims that supplied parameter values only."""
     g = gate()
     params = bind_params("send_payment", {"vendor": "Acme Ltd", "amount": 120.0, "account": "9876"}, FIN, REG)
     v = g.allow("send_payment", params, ["contested", "weak", "invoice", "good"], FIN)

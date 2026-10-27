@@ -1,4 +1,4 @@
-# infra/ — Brev GPU ops (owner: M4)
+# infra/ — Brev GPU ops
 
 | File | What |
 |---|---|
@@ -36,7 +36,7 @@ python -m eval.report results/attacks/brev-test/summary.json   # docs/results.md
 rsync results/attacks/raw/ <somewhere off the box>             # raw rows are gitignored
 python infra/cost_logger.py session --member M4 --instance <name> --gpu L40S --hours <h> --rate <$/h> \
     --purpose "final test run" --from-summary results/attacks/brev-test/summary.json
-git add results/attacks/brev-test results/attacks/brev-test-latency docs/results.md infra/budget.csv  # then commit, push
+git add results/attacks/<run-id> docs/results.md infra/budget.csv  # then commit, push
 sudo shutdown -h now
 ```
 - Use the full model name (`MODEL=Qwen/Qwen3-8B`): the eval client switches qwen3 thinking off by name; the vLLM
@@ -58,7 +58,6 @@ sudo shutdown -h now
    `python infra/cost_logger.py session --member M4 --instance <name> --gpu <type> --hours <h> --rate <$/h> --purpose "<job>"`
    then `python infra/cost_logger.py summary`. Tokens come from the runner's `TokenMeter` totals.
 5. **Set a hard stop**: before a long job, schedule `sudo shutdown -h +<minutes>` as a backstop.
-6. **Ask M4 before** anything over 4 GPU-hours or any GPU larger than a single A100/H100 (e.g. the optional 70B run).
-7. **Planned spend** (TEAM_PLAN.md): dev ~$40 · calibration/fine-tune ~$20 · main runs ~$80 · optional larger model
+7. **Planned spend:** dev ~$40 · calibration/fine-tune ~$20 · main runs ~$80 · optional larger model
    ~$100 · demo ~$30 → ~$270; the rest is reserve. If `summary` shows >$300 spent, stop and re-plan with the team.
 8. No secrets on disk in the repo: `HF_TOKEN` and API keys only as environment variables.

@@ -1,4 +1,4 @@
-"""Consistency audit rules that can be automated (docs/testing/consistency_audit.md).
+"""Consistency rules between code, data and docs, checked automatically.
 
 Interfaces, one source of truth, data flow through all five versions, disjoint splits and repo hygiene.
 """

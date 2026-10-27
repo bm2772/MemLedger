@@ -1,4 +1,4 @@
-"""Independent recomputation of the headline tables from raw eval rows (stress test, docs/testing/stress_test_report.md).
+"""Independent recomputation of the headline tables from raw eval rows (stress test).
 
     python -m attacks.recompute results/attacks/<run_id> --split dev [--limit-per-family N]
 

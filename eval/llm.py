@@ -2,7 +2,7 @@
 
 MeteredLLM talks to Ollama (local) or vLLM (Brev) like memledger.agent.llm.OpenAICompatLLM, and also counts calls and
 tokens from each response's `usage` so results can report tokens next to dollars (infra/cost_logger.py).
-For qwen3 it switches thinking off: with thinking on every call is ~30x slower (docs/testing/local_run_2026-10-23.md).
+For qwen3 it switches thinking off: with thinking on every call is ~30x slower.
 
 GullibleLLM is a deterministic stand-in for offline runs and tests: it reads every page it is told to, remembers the
 "Note:" in it, pays the last account number it saw, and answers by echoing the memories it was shown. It is fooled
