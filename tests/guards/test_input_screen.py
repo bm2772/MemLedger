@@ -184,3 +184,19 @@ def test_low_cutoff_maps_passing_scores_into_the_high_band():
     assert InputScreen(classifier=lambda t: 1.0, classifier_cutoff=0.006).score("x") == 1.0
     assert InputScreen(classifier=lambda t: 0.004, classifier_cutoff=0.006).score("hello") == 0.0
     assert InputScreen(classifier=lambda t: 0.3).score("hello") == 0.3  # untuned: raw score, as before
+
+
+def test_tuning_sweep_sees_raw_scores_not_the_cutoff_mapping():
+    """tune_screen must sweep raw classifier scores: with a tuned cut-off in force, a re-tune would only ever see 0
+    or >= high (review of #28)."""
+    from memledger.guards.train.tune_screen import sweep_screen
+
+    class Tuned:
+        cutoff = 0.006
+
+        def __call__(self, text):
+            return 0.004
+
+    assert InputScreen(classifier=Tuned()).assess("hello").layers["classifier"] == 0.0  # runtime: below cut-off
+    r = sweep_screen(Tuned()).assess("hello")
+    assert r.layers["classifier"] == 0.004 and r.classifier_raw == 0.004 and r.score == 0.004

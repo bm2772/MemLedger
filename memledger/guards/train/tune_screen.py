@@ -74,8 +74,15 @@ def rates(scores: list[float], labels: list[int], t: float) -> dict:
             "fpr": sum(1 for s, y in zip(scores, labels, strict=True) if y == 0 and s >= t) / neg}
 
 
-def main(argv: list[str] | None = None) -> int:  # pragma: no cover - needs BIPIA and (optionally) models
+def sweep_screen(classifier: object | None) -> object:
+    """The screen to sweep with: the classifier's current cut-off (and the mapping onto the high band) switched off,
+    so the sweep sees raw scores and can find a new cut-off below or above the one in TUNED_CUTOFFS."""
     from memledger.guards.input_screen import InputScreen
+
+    return InputScreen(classifier=classifier, classifier_cutoff=0.0)
+
+
+def main(argv: list[str] | None = None) -> int:  # pragma: no cover - needs BIPIA and (optionally) models
     from memledger.guards.models import HFTextClassifier
 
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -89,13 +96,14 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - needs BIPI
     data = load_train(a.bipia_benchmark, a.per_task)
     model = {"none": None, "protectai": "protectai/deberta-v3-base-prompt-injection-v2",
              "promptguard": "meta-llama/Llama-Prompt-Guard-2-86M"}[a.classifier]
-    screen = InputScreen(classifier=HFTextClassifier(model) if model else None)
+    screen = sweep_screen(HFTextClassifier(model) if model else None)
     results = [screen.assess(text) for text, _ in data]
     labels = [y for _, y in data]
     report = {"split": "BIPIA train", "n": len(data), "positives": sum(labels), "classifier": model or "none",
               "max_fpr": a.max_fpr, "layers": {}}
     for layer in ["rules", "classifier", "max"]:
-        scores = [r.score if layer == "max" else r.layers.get(layer, 0.0) for r in results]
+        scores = [r.score if layer == "max" else (r.classifier_raw or 0.0) if layer == "classifier"
+                  else r.layers.get(layer, 0.0) for r in results]
         if layer == "classifier" and not model:
             continue
         report["layers"][layer] = {"best": sweep(scores, labels, a.max_fpr),
