@@ -49,7 +49,9 @@ Errors per version: baseline 1/2299 = 0.0% [0.0%, 0.2%], provenance 0/2299 = 0.0
 | 12 | Input screen unhides and flags injected instructions | `tests/guards/test_input_screen.py::test_injections_are_high` | test (passes in CI) |
 | 13 | Hallucination check rejects unsupported facts | `tests/guards/test_hallucination.py::test_made_up_number_rejected` | test (passes in CI) |
 
-**Not measured yet** (future work unless added before 27 Oct): Attribution accuracy (leave-one-out); Trust calibration error (ECE); Detection F1 on RAGTruth / HaluEval / planted conflicts; Update accuracy; Clean-up recall and false quarantine rate on attack sets; Injection precision/recall on BIPIA test, InjecAgent, AgentDojo; I7 (latency independence, KS test) and I8 (deletion); 8 attack types × 6 access paths coverage matrix.
+Hallucination check on its own (RAGTruth, HaluEval QA; no agent): [docs/results/hallucination_benchmarks.md](results/hallucination_benchmarks.md).
+
+**Not measured yet** (future work unless added before 27 Oct): Attribution accuracy (leave-one-out); Trust calibration error (ECE); Detection F1 on planted conflicts; Update accuracy; Clean-up recall and false quarantine rate on attack sets; Injection precision/recall on BIPIA test, InjecAgent, AgentDojo; I7 (latency independence, KS test) and I8 (deletion); 8 attack types × 6 access paths coverage matrix.
 
 Manifests (what each version had switched on):
 
