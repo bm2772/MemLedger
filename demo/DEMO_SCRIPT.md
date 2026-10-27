@@ -1,20 +1,17 @@
-# 3-minute demo script (30 Oct) — owner M4
+# Demo script (chat demo) — owner M4
 
-Setup before the slot (do not rely on Wi-Fi): `bash demo/run.sh` (fake fooled model + lexical checkers, no network),
-browser at http://localhost:8501, window zoomed so both columns fit. Fallback: play the screen recording
-`demo/recording.mp4` (record it with this script after the final run; keep it out of git if > 20 MB, share by link).
+Setup (no Wi-Fi needed): `bash demo/run.sh`, browser at http://localhost:8501, full screen (F11), zoom 100%.
+Fallback: the recorded video. If anything misbehaves on stage, switch to the recording; don't debug live.
 
-| time | tab | do | say |
+For each test case: pick it in the dropdown, protection **off**, **▶ Run**; then protection **on**, **▶ Run**. Both runs
+stay in the chat, one under the other. Press **Clear chat** before the next case.
+
+| case | off: point at | on: point at | say |
 |---|---|---|---|
-| 0:00 | 1 · Poisoned web page | read the blue box aloud in one line | "A researcher's agent reads a supplier page with one planted sentence. Two weeks later finance asks the same agent to pay Acme." |
-| 0:15 | 1 | **Run the scenario on both systems** | Left: "Plain memory stored it, recalled it and paid account 9876 — the attacker." Right: "MemLedger refused it: bank accounts must match the signed registry. The page is flagged, the payment takes the account from the registry, and the other memory from that page is quarantined." |
-| 0:55 | 2 · Lineage view | select D3 | "Every memory knows where it came from: here D3 depends on D2, which came from a web page." |
-| 1:15 | 3 · Clean-up | **Flag the web page**, then **New independent evidence for D2** | "Flag one source: exactly the memories that depended only on it are quarantined; D1 survives because a paper and a tool output also support it. New evidence restores D2 automatically." |
-| 1:45 | 4 · Isolation | **Ask on both systems** | "Team B asks the agent for team A's confidential result. Plain memory hands it over; MemLedger never lets it reach the model — the unique marker appears nowhere." |
-| 2:10 | 5 · Tamper detection | **Tamper and read it back** (memory text) | "Someone edits the database directly. The hash no longer matches the signed root: withheld and quarantined on the next read." |
-| 2:30 | 6 · Attack families | **Run selected families** | "Nine attack families, one example each: all work on plain memory, none on MemLedger, and this column names the mechanism that stopped each." |
-| 2:50 | Results | scroll to the safety table | "The measured rates with 95% intervals are here and in the deck." |
+| 1 Poisoned web page → payment | red "Paid account 9876" | "Write refused…", "Account bound… unknown → 1234" | "Plain memory believes the page and pays the attacker. MemLedger refuses the fake account, flags the page and pays from the signed registry." |
+| 2 Memory injection through chat | "remember … 5550 → stored", red payment | "Input screen flagged this message", "Write refused" | "Anyone in the chat can plant a fact in plain memory. MemLedger refuses it." |
+| 3 Hidden instruction in a document | red "Sent to reports@evil-mail.example" | "Input screen flagged this page on arrival" | "A hidden instruction exfiltrates the report. MemLedger keeps the page out of the agent's memory." |
+| 4 Another team's confidential data | 93.1 in the agent's answer | "Access control: … never shown to the agent" | "Plain memory has no notion of teams. MemLedger only ever shows the agent what this user may read." |
+| 5 Direct database edit | "19%" in the answer | "Integrity check failed on read" | "A direct database edit is served as fact by plain memory and caught by MemLedger's hash chain." |
 
-If something fails live: say "here is the same run recorded" and switch to the recording; do not debug on stage.
-Real-model variant (only if the venue network and a laptop with Ollama are confirmed): sidebar → Ollama / vLLM, model
-`qwen3:8b` (thinking is switched off automatically); the slide 5 run then takes ~10–20 s instead of < 1 s.
+Optional, after any ON run: type the suggested question in the chat box to show the memory itself is clean.

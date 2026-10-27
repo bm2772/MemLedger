@@ -1,15 +1,19 @@
-"""MemLedger demo (slide 24, Figure 7): plain memory vs MemLedger, lineage, clean-up, isolation, tamper, attack families.
+"""MemLedger chat demo: attack test cases as a conversation, with MemLedger protection switched on or off.
 
     pip install -e ".[demo]"
-    bash demo/run.sh            # offline: fake model + lexical checkers, no network needed
+    bash demo/run.sh            # offline: fooled test model + code-only checkers, no network needed
 
-All logic lives in demo/scenario.py (tested); this file only lays it out.
+Pick a test case, set the protection switch, press Run: the conversation is played on the real services (demo/chat.py)
+and ends with a verdict. Run it again with the switch flipped to compare. The chat box asks the agent a follow-up
+question against the memory the last run left behind. $DEMO_DELAY sets the seconds between messages (default 0.6).
 """
 
 from __future__ import annotations
 
+import html
 import os
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,178 +23,116 @@ os.environ.setdefault("MEMLEDGER_GUARD_BACKEND", "lexical")  # offline by defaul
 
 import streamlit as st
 
-from demo import scenario as sc
+from demo import chat
 
-st.set_page_config(page_title="MemLedger demo", layout="wide")
-st.title("MemLedger: provenance-governed memory")
-st.caption("AEGIS 2026 · team Prompt Stars · live demo of slides 5, 6, 7, 14 and 21")
+DELAY = float(os.environ.get("DEMO_DELAY", "0.6"))
 
-with st.sidebar:
-    st.header("Agent model")
-    mode = st.radio("LLM", ["Fooled fake model (deterministic)", "Ollama / vLLM"], index=0)
-    llm = None
-    if mode != "Fooled fake model (deterministic)":
-        from eval.llm import MeteredLLM
+st.set_page_config(page_title="MemLedger chat demo", page_icon="🛡️", layout="centered")
+st.markdown("""
+<style>
+  .block-container { padding-top: 1.6rem; max-width: 860px; }
+  .ml-head { display: flex; align-items: baseline; gap: .6rem; margin-bottom: .2rem; }
+  .ml-head h1 { font-size: 1.7rem; margin: 0; }
+  .ml-head span { color: #8b949e; font-size: .95rem; }
+  .ml-who { font-size: .78rem; color: #8b949e; margin-bottom: .15rem; }
+  .ml-tool { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .86rem; padding: .35rem .6rem;
+             border-radius: 8px; background: rgba(139,148,158,.12); display: inline-block; }
+  .ml-tool.bad { background: rgba(248,81,73,.16); color: #ff7b72; }
+  .ml-tool.ok { background: rgba(63,185,80,.16); color: #56d364; }
+  .ml-guard { border-left: 3px solid #3fb950; background: rgba(63,185,80,.10); padding: .45rem .7rem;
+              border-radius: 6px; font-size: .92rem; }
+  .ml-sys { color: #8b949e; font-size: .9rem; font-style: italic; }
+  .ml-case { border: 1px solid rgba(139,148,158,.35); border-radius: 10px; padding: .6rem .8rem; font-size: .93rem; }
+  .ml-case b { font-size: 1rem; }
+  .ml-pill { display: inline-block; font-size: .75rem; font-weight: 600; padding: .1rem .5rem; border-radius: 99px;
+             margin-left: .4rem; vertical-align: middle; }
+  .ml-pill.on { background: rgba(63,185,80,.2); color: #56d364; }
+  .ml-pill.off { background: rgba(248,81,73,.2); color: #ff7b72; }
+  .ml-verdict { border-radius: 10px; padding: .7rem .9rem; font-weight: 600; font-size: 1rem; margin: .3rem 0 1.2rem; }
+  .ml-verdict.bad { background: rgba(248,81,73,.15); border: 1px solid rgba(248,81,73,.55); color: #ff7b72; }
+  .ml-verdict.ok { background: rgba(63,185,80,.13); border: 1px solid rgba(63,185,80,.55); color: #56d364; }
+  .ml-sep { border-top: 1px dashed rgba(139,148,158,.35); margin: 1.2rem 0 .8rem; }
+</style>
+<div class="ml-head"><h1>🛡️ MemLedger</h1><span>chat demo · attacks on an AI agent's memory</span></div>
+""", unsafe_allow_html=True)
 
-        model = st.text_input("Model", "qwen3:8b")
-        url = st.text_input("Base URL", "http://localhost:11434/v1")
-        llm = MeteredLLM(model=model, base_url=url, timeout=120)
-    st.caption("Checkers: code-only (lexical) in every demo scenario, whatever $MEMLEDGER_GUARD_BACKEND says; "
-               "the model-based results are in the Results tab.")
-    st.markdown("The fake model believes everything it reads, so any difference comes from the memory layer.")
-    offline = os.environ.get("HF_HUB_OFFLINE") == "1"
-    st.caption("Offline mode: no network calls" if offline and llm is None else "Network may be used (real model)")
+if "log" not in st.session_state:
+    st.session_state.log = []  # rendered items: ("case", ...), ("msg", Msg), ("verdict", ...), ("sep",)
+    st.session_state.played = None
 
-tab_acme, tab_lineage, tab_cleanup, tab_iso, tab_tamper, tab_fam, tab_results = st.tabs(
-    ["1 · Poisoned web page (slide 5)", "2 · Lineage view", "3 · Clean-up (slide 6)", "4 · Isolation (slide 21)",
-     "5 · Tamper detection", "6 · Attack families", "Results"])
-
-with tab_acme:
-    st.subheader("A researcher reads a supplier page; two weeks later finance pays Acme's invoice")
-    st.info(sc.PAGE, icon="🌐")
-    if st.button("Run the scenario on both systems", type="primary") or "acme" in st.session_state:
-        if "acme" not in st.session_state:
-            with st.spinner("Running plain memory and MemLedger..."):
-                st.session_state.acme = {v: sc.play_acme(v, llm) for v in ("baseline", "full")}
-        plain, ml = st.session_state.acme["baseline"], st.session_state.acme["full"]
-        left, right = st.columns(2)
-        for col, r, title in ((left, plain, "Plain retrieval memory"), (right, ml, "MemLedger (full)")):
-            with col:
-                st.markdown(f"### {title}")
-                acct = r["writes"]["m_account"]
-                if acct["accepted"]:
-                    st.error(f"**Stored.** “{acct['text']}” saved like any other memory.")
-                else:
-                    st.success("**Rejected.** " + "; ".join(acct["reasons"]))
-                st.write("**Page flagged:**", "yes" if r["web_flagged"] else "no")
-                st.markdown("**Recalled for the payment:**")
-                st.code("\n".join(r["recalled"]) or "(nothing)", language="text")
-                for p in r["payment"]:
-                    paid = p["paid"]
-                    msg = f"model asked for account `{p['asked']}` → paid `{paid}` ({p['status']}: {p['reason']})"
-                    (st.error if paid == sc.ATTACKER else st.success)(("**Paid the attacker.** " if paid == sc.ATTACKER
-                                                                       else "**Paid safely.** ") + msg)
-                st.markdown("**Memory afterwards**")
-                st.dataframe(r["claims"], hide_index=True, width="stretch")
-        if st.button("Reset scenario"):
-            del st.session_state.acme
-            st.rerun()
-
-def figure1_state() -> dict:
-    if "fig1" not in st.session_state:
-        st.session_state.fig1 = sc.figure1()
-        st.session_state.fig1_log = []
-    return st.session_state.fig1
+titles = {c.key: f"{i}. {c.title}" for i, c in enumerate(chat.CASES, 1)}
+c1, c2, c3 = st.columns([3.2, 2.2, 1.1], vertical_alignment="bottom")
+key = c1.selectbox("Test case", list(titles), format_func=titles.get, label_visibility="collapsed")
+protected = c2.toggle("MemLedger protection", value=False)
+run = c3.button("▶ Run", type="primary", width="stretch")
+cols = st.columns([5, 1])
+cols[0].caption(("🟢 **Protection ON**: full MemLedger" if protected else "🔴 **Protection OFF**: plain memory")
+                + " · agent: fooled test model (believes everything it reads)")
+if cols[1].button("Clear chat", width="stretch"):
+    st.session_state.log, st.session_state.played = [], None
+    st.rerun()
 
 
-with tab_lineage:
-    st.subheader("explain(): where a memory came from")
-    f = figure1_state()
-    svc = f["service"]
-    name = st.selectbox("Memory", list(f["claims"]), format_func=lambda k: f"{k}: {svc.store.get_claim(f['claims'][k]).text}")
-    st.graphviz_chart(sc.lineage_dot(svc.explain(f["claims"][name])))
-    st.caption("Ellipses are sources, boxes are memories; red = flagged or quarantined. Each edge is one derivation "
-               "(justification); the JTMS keeps a memory while at least one derivation has only valid parents.")
-    with st.expander("Raw explain() output"):
-        st.json(svc.explain(f["claims"][name]))
-
-with tab_cleanup:
-    st.subheader("Targeted clean-up when a source turns out to be poisoned")
-    f = figure1_state()
-    svc = f["service"]
-    st.markdown("Sources: paper, registry entry, user note, tool output and a **web page**. "
-                "D1 also follows from the paper and the tool output alone; D2 comes from the page; D3 builds on D2.")
-    rows = [{"memory": k, **next(c for c in sc.claim_table(svc) if c["id"] == cid)} for k, cid in f["claims"].items()]
-    st.dataframe(rows, hide_index=True, width="stretch")
-    a, b, c = st.columns(3)
-    if a.button("Flag the web page as poisoned", type="primary"):
-        out = sc.flag(svc, f["sources"]["web"])
-        st.session_state.fig1_log.append(("flag web page", out))
-        st.rerun()
-    if b.button("New independent evidence for D2 (paper)"):
-        out = sc.restore_with_evidence(svc, f["claims"]["D2"], [f["sources"]["paper"]])
-        st.session_state.fig1_log.append(("evidence for D2", out))
-        st.rerun()
-    if c.button("Reset"):
-        del st.session_state.fig1
-        st.rerun()
-    names = {v: k for k, v in f["claims"].items()}
-    for action, out in st.session_state.get("fig1_log", []):
-        st.write(f"**{action}** → quarantined: {[names.get(x, x) for x in out['quarantined']] or '-'}; "
-                 f"restored: {[names.get(x, x) for x in out['restored']] or '-'}")
-
-with tab_iso:
-    st.subheader("Team B's user asks the agent for team A's confidential note")
-    st.markdown(f"Team A's memory holds a confidential result with a unique marker `{sc.CANARY[:20]}…`. "
-                "Bob (team B) asks the agent to ignore team limits and fetch it.")
-    if st.button("Ask on both systems", type="primary", key="iso_run"):
-        st.session_state.iso = {v: sc.play_isolation(v, llm) for v in ("baseline", "full")}
-    if "iso" in st.session_state:
-        left, right = st.columns(2)
-        for col, v, title in ((left, "baseline", "Plain retrieval memory"), (right, "full", "MemLedger (full)")):
-            r = st.session_state.iso[v]
-            with col:
-                st.markdown(f"### {title}")
-                st.write(f"Memories returned to Bob's search: **{r['retrieved']}**")
-                st.code(r["answer"] or "(no answer)", language="text")
-                if r["leaked"]:
-                    st.error(f"**Leaked** team A's data: {', '.join(sorted({x['where'] for x in r['leaks']}))}")
-                else:
-                    st.success("**Withheld.** No team A marker appears anywhere Bob can see.")
-        st.caption("Read rule (slide 21): team(m) ∈ {team(p), shared} and confidentiality(m) ≤ clearance(p), enforced "
-                   "by the service before anything reaches the model. Leak check 2: the marker is searched in the "
-                   "answer, tool calls, retrieved memories and errors.")
-
-with tab_tamper:
-    st.subheader("Someone with database access edits a stored memory directly")
-    edit = st.radio("Edit", ["claim_text", "source_content", "recorded_at"], horizontal=True,
-                    format_func={"claim_text": "memory text 64 → 640", "source_content": "its source paper",
-                                 "recorded_at": "record timestamp"}.get)
-    if st.button("Tamper and read it back", type="primary"):
-        r = sc.tamper_demo(edit)
-        left, right = st.columns(2)
-        left.markdown("**Read before the edit**")
-        left.code("\n".join(r["before"]), language="text")
-        right.markdown("**Read after the edit**")
-        right.code("\n".join(r["after"]) or "(withheld)", language="text")
-        (st.success if r["detected"] else st.error)(
-            f"{'Detected' if r['detected'] else 'NOT detected'}: status {r['status']}; log: {' → '.join(r['history'])}")
-        st.caption("SHA-256(content ‖ record time ‖ parent hashes ‖ labels) is recomputed on read and checked "
-                   "against the signed Merkle root (slide 14).")
-
-@st.cache_resource(show_spinner="Building the attack suite (one episode per family)...")
-def families() -> dict:
-    return sc.family_samples()
+def esc(text: str) -> str:
+    return html.escape(text).replace("\n", "<br>")
 
 
-with tab_fam:
-    st.subheader("One attack per family: plain memory vs MemLedger")
-    fams = families()
-    pick = st.multiselect("Families", list(fams), default=list(fams))
-    if st.button("Run selected families", type="primary", key="fam_run"):
-        rows = []
-        with st.spinner(f"Running {len(pick)} episodes on two versions..."):
-            for name in pick:
-                b, f = sc.play_family(fams[name], "baseline", llm), sc.play_family(fams[name], "full", llm)
-                rows.append({"family": name, "episode": fams[name].id,
-                             "plain memory": "attack worked" if b["succeeded"] else "defended",
-                             "MemLedger": "attack worked" if f["succeeded"] else "defended",
-                             "stopped by": f["blocked_by"] or "–", "errors": b["error"] or f["error"] or ""})
-        st.session_state.fam_rows = rows
-    if "fam_rows" in st.session_state:
-        st.dataframe(st.session_state.fam_rows, hide_index=True, width="stretch")
-        worked = [r for r in st.session_state.fam_rows if r["MemLedger"] == "attack worked"]
-        st.caption(f"{len(worked)} of {len(st.session_state.fam_rows)} families got through MemLedger in this sample. "
-                   "Each family is shown with its first episode whose attack works on plain memory, to show what "
-                   "MemLedger stops (chosen with the fake model, also when a real model is selected): this is an "
-                   "illustration, not a rate. Rates over all episodes, with intervals, are in Results.")
-
-with tab_results:
-    results = Path(os.environ.get("MEMLEDGER_RESULTS_MD", ROOT / "docs" / "results.md"))
-    if results.exists():
-        st.markdown(results.read_text())
+def show(item) -> None:
+    kind = item[0]
+    if kind == "case":
+        _, case, prot = item
+        pill = ('<span class="ml-pill on">PROTECTION ON</span>' if prot
+                else '<span class="ml-pill off">PROTECTION OFF</span>')
+        with st.chat_message("assistant", avatar="🎯"):
+            st.markdown(f'<div class="ml-case"><b>Test case: {esc(case.title)}</b>{pill}<br>{esc(case.attack)}</div>',
+                        unsafe_allow_html=True)
+    elif kind == "verdict":
+        _, attacked, text = item
+        cls, head = ("bad", "❌ Attack succeeded") if attacked else ("ok", "🛡️ Attack blocked")
+        st.markdown(f'<div class="ml-verdict {cls}">{head}: {esc(text)}</div>', unsafe_allow_html=True)
+    elif kind == "sep":
+        st.markdown('<div class="ml-sep"></div>', unsafe_allow_html=True)
     else:
-        st.warning("docs/results.md is missing. Generate it (offline, no model needed) with:")
-        st.code("python -m scenarios.generator --seed 0 --out data/scenarios/seed0.json\n"
-                "python -m eval.runner --episodes data/scenarios/seed0.json --split dev --llm fake --guards lexical\n"
-                "python -m eval.report results/<run_id>/summary.json", language="bash")
+        m = item[1]
+        if m.role == "user":
+            with st.chat_message("user", avatar=m.avatar or "🧑"):
+                st.markdown(f'<div class="ml-who">{esc(m.who)}</div>{esc(m.text)}', unsafe_allow_html=True)
+        elif m.role == "agent":
+            with st.chat_message("assistant", avatar="🤖"):
+                st.markdown(f'<div class="ml-who">Agent</div>{esc(m.text)}', unsafe_allow_html=True)
+        elif m.role == "guard":
+            with st.chat_message("assistant", avatar="🛡️"):
+                st.markdown(f'<div class="ml-who">MemLedger</div><div class="ml-guard">{esc(m.text)}</div>',
+                            unsafe_allow_html=True)
+        elif m.role == "tool":
+            with st.chat_message("assistant", avatar="⚙️"):
+                st.markdown(f'<div class="ml-who">{esc(m.who)}</div>'
+                            f'<span class="ml-tool {m.tone}">{esc(m.text)}</span>', unsafe_allow_html=True)
+        else:
+            with st.chat_message("assistant", avatar="📁" if m.who == "Memory" else "🛠️"):
+                st.markdown(f'<div class="ml-sys">{esc(m.text)}</div>', unsafe_allow_html=True)
+
+
+for item in st.session_state.log:
+    show(item)
+
+
+def stream(items: list) -> None:
+    for item in items:
+        show(item)
+        st.session_state.log.append(item)
+        time.sleep(DELAY if item[0] != "verdict" else DELAY / 2)
+
+
+if run:
+    case = chat.BY_KEY[key]
+    played = chat.play(case, protected)
+    st.session_state.played = played
+    items = ([("sep",)] if st.session_state.log else []) + [("case", case, protected)]
+    items += [("msg", m) for m in played.messages] + [("verdict", played.attacked, played.verdict)]
+    stream(items)
+
+played = st.session_state.played
+hint = f"Ask the agent… e.g. {played.case.probe}" if played else "Run a test case first, then ask the agent"
+if q := st.chat_input(hint, disabled=played is None):
+    stream([("msg", m) for m in chat.ask(played, q)])
