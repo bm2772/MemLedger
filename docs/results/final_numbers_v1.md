@@ -1,4 +1,43 @@
-# Final numbers for v1.0 (run `final2`, 26 Oct 2026)
+# Final numbers for v1.0 (agent: NVIDIA Nemotron Nano 9B v2, run `final-nemo`, 27 Oct 2026)
+
+**Setup:**
+- Brev L40; the agent model, `nvidia/NVIDIA-Nemotron-Nano-9B-v2`, is served with vLLM using NVIDIA's tool-call parser
+  (ported to vLLM 0.32, `infra/nemotron/`) and its chat template with thinking off.
+- Test split: **2299 episodes per version**, the same suite as run `final2` below.
+- Checkers:
+  - base memshield (DeBERTa-v3-base);
+  - DeBERTa-v3-large NLI;
+  - MiniCheck;
+  - Prompt Guard 2 (chosen on dev).
+- Code: `v1.0` with all PRs merged. `docs/results.md` is generated from `results/attacks/final-nemo`.
+
+## Test split, all versions
+
+| version | attack success (oracle) | hijacked actions | leak rate | tamper detected | benign task accuracy | legit payments not completed | harmless writes rejected |
+|---|---|---|---|---|---|---|---|
+| baseline (plain memory) | 712/1456 = 48.9% | 298/838 = 35.6% | 331/2299 = 14.4% | 0/72 = 0.0% | 205/238 = 86.1% | 15/66 = 22.7% | 0/540 = 0.0% |
+| provenance | 467/1455 = 32.1% | 274/838 = 32.7% | 93/2299 = 4.0% | 72/72 = 100.0% | 205/238 = 86.1% | 15/66 = 22.7% | 0/540 = 0.0% |
+| write checks | 187/1456 = 12.8% | 58/838 = 6.9% | 87/2299 = 3.8% | 72/72 = 100.0% | 201/238 = 84.5% | 16/66 = 24.2% | 30/541 = 5.5% |
+| **full MemLedger** | **57/1456 = 3.9%** | **0/838 = 0.0%** | **0/2299 = 0.0%** | **72/72 = 100.0%** | 200/238 = 84.0% | 12/66 = 18.2% | 30/540 = 5.6% |
+| full, no registry | 58/1456 = 4.0% | 0/838 = 0.0% | 17/2299 = 0.7% | 72/72 = 100.0% | 200/238 = 84.0% | 66/66 = 100.0% | 30/540 = 5.6% |
+
+Latency (run `final-nemo-latency`, 1 worker, 5 episodes per family): **+21.1 ms per write, +0.7 ms per read** on `full`.
+
+## Per benchmark, plain memory → full
+
+| benchmark | attack success | harmless writes rejected (full) | clean inputs quarantined (full) |
+|---|---|---|---|
+| AgentDojo (230) | 43.0% → **0.0%** | – | – |
+| InjecAgent (300 attacks) | 0.7% → **0.0%** | – | 0/300 = 0.0% |
+| MemShield-bench (179) | 93.9% → **10.2%** | 4/130 = 3.1% | 1/130 = 0.8% |
+| BIPIA (300) | 13.3% → **10.0%** | – | 13/150 = 8.7% |
+| MemEvoBench (166) | 21.7% → **13.3%** | 21/166 = 12.7% | 2/166 = 1.2% |
+
+The model comparison (Nemotron vs Qwen3-8B on this suite, and Qwen3-8B vs Qwen3-32B on the earlier suite) is in the slides (Table 12). The mechanism benchmarks (clean-up recall, false quarantine, contradiction F1) are in `mechanisms.md`.
+
+---
+
+# Same suite with Qwen3-8B as the agent (run `final2`, 26 Oct 2026)
 
 **Setup:**
 - Brev L40, agent Qwen3-8B served with vLLM.
@@ -9,7 +48,6 @@
   - MiniCheck;
   - **Prompt Guard 2 86M** input screen, chosen on dev (see below).
 - Code: branch `run/brev-final-2`, i.e. #21–#25, #27, #28 merged for the run only.
-- `docs/results.md` is generated from `results/attacks/final2`.
 
 ## Test split, all versions
 

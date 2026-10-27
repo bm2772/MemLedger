@@ -24,10 +24,12 @@ scenario episodes, each attack with a harmless twin). 95% Wilson intervals are i
 
 | version | attack success | hijacked actions | leaks | tamper detected | harmless writes rejected | task accuracy |
 |---|---|---|---|---|---|---|
-| plain memory | 58.7% | 49.6% | 14.5% | 0/72 | 0% | 88.2% |
-| **MemLedger (full)** | **4.2%** | **0/838** | **0/2299** | **72/72** | 5.6% | 84.0% |
+| plain memory | 48.9% | 35.6% | 14.4% | 0/72 | 0% | 86.1% |
+| **MemLedger (full)** | **3.9%** | **0/838** | **0/2299** | **72/72** | 5.6% | 84.0% |
 
-Added latency: +25.5 ms per write, +0.8 ms per read. Known weak spots (MemEvoBench, BIPIA over-blocking, contradiction
+Agent: NVIDIA Nemotron Nano 9B v2 (vLLM on one L40). With Qwen3-8B the same suite gives 4.2% vs 58.7%. Added latency:
++21.1 ms per write, +0.7 ms per read. Clean-up after a flagged source: 100% of dependent memories quarantined, 0%
+false quarantine (`docs/results/mechanisms.md`). Known weak spots (MemEvoBench, BIPIA over-blocking, contradiction
 false positives) are listed in the results doc.
 
 ## Try it (no GPU, about 2 minutes)
@@ -75,12 +77,11 @@ PYTHONPATH=. .venv/bin/python -u -m attacks.evaluate --split test --llm openai -
 PYTHONPATH=. .venv/bin/python -m eval.report results/attacks/my-run/summary.json --out docs/results.md
 ```
 
-**NVIDIA Nemotron as the agent** (`nvidia/NVIDIA-Nemotron-Nano-9B-v2`). Serve it with NVIDIA's tool-call parser from the
-model repo and the chat template in `infra/nemotron/`, which turns thinking off by default:
+**NVIDIA Nemotron as the agent** (`nvidia/NVIDIA-Nemotron-Nano-9B-v2`, the reported runs). Serve it with the tool-call
+parser and chat template in `infra/nemotron/` (NVIDIA's parser ported to vLLM 0.32; thinking off by default):
 ```bash
-hf download nvidia/NVIDIA-Nemotron-Nano-9B-v2 nemotron_toolcall_parser_no_streaming.py --local-dir .
 vllm serve nvidia/NVIDIA-Nemotron-Nano-9B-v2 --trust-remote-code --mamba_ssm_cache_dtype float32 \
-    --max-model-len 16384 --enable-auto-tool-choice --tool-parser-plugin nemotron_toolcall_parser_no_streaming.py \
+    --max-model-len 16384 --enable-auto-tool-choice --tool-parser-plugin infra/nemotron/nemotron_toolcall_parser.py \
     --tool-call-parser nemotron_json --chat-template infra/nemotron/chat_template_nothink.jinja
 ```
 Then run the same `attacks.evaluate` command with `--model nvidia/NVIDIA-Nemotron-Nano-9B-v2`.
