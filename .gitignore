@@ -20,3 +20,10 @@ chroma/
 results/raw/
 .DS_Store
 *.egg-info/
+var/
+node_modules/
+web/ui/dist/
+*.tsbuildinfo
+
+# raw per-episode rows of any eval run (large; copy them off Brev, never commit)
+results/*/raw/

@@ -1,6 +1,7 @@
 """In-memory stand-in for MemoryService so M2-M4 can build before M1's real service lands.
 
-Behaves like the plain-RAG baseline: no checks, keyword-overlap retrieval, team scoping only.
+Behaves like the plain-RAG baseline: no checks, keyword-overlap retrieval, team scoping only
+(`scoped=False`: no scoping at all, a global store).
 """
 
 from __future__ import annotations
@@ -36,7 +37,8 @@ def sha(text: str) -> str:
 
 
 class MockMemoryService:
-    def __init__(self) -> None:
+    def __init__(self, scoped: bool = True) -> None:
+        self.scoped = scoped  # False = plain RAG over one global store (the eval baseline)
         self._ids = itertools.count(1)
         self.sources: dict[str, Source] = {}
         self.claims: dict[str, Claim] = {}
@@ -59,7 +61,7 @@ class MockMemoryService:
         words = set(query.lower().split())
         hits = []
         for c in self.claims.values():
-            if c.labels.team not in (session.team, "shared"):
+            if self.scoped and c.labels.team not in (session.team, "shared"):
                 continue
             overlap = len(words & set(c.text.lower().split()))
             if overlap:
@@ -69,7 +71,7 @@ class MockMemoryService:
     def flag_source(self, source_id: str, reason: str) -> dict[str, list[str]]:
         if source_id in self.sources:
             self.sources[source_id].flagged = True
-        return {"quarantined": [], "restored": []}
+        return {"quarantined": [], "restored": [], "contested": []}
 
     def explain(self, claim_id: str) -> dict:
         return {"claim": claim_id, "lineage": []}

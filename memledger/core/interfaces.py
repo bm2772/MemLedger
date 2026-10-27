@@ -25,14 +25,17 @@ class MemoryService(Protocol):
     def retrieve(self, query: str, session: Session, k: int = 8) -> list[RetrievedMemory]: ...
 
     def flag_source(self, source_id: str, reason: str) -> dict[str, list[str]]:
-        """Returns {'quarantined': [...], 'restored': [...]} (JTMS retraction)."""
+        """Returns {'quarantined': [...], 'restored': [...], 'contested': [...]} (JTMS retraction; exposure)."""
         ...
 
     def explain(self, claim_id: str) -> dict: ...
 
 
 class Check(Protocol):
-    """A guardrail check (slides 12-13). Owner: M2."""
+    """A guardrail check (slides 12-13). Owner: M2.
+
+    A check may add an optional `claims` parameter after `sources` (the parent memories in the context); the service
+    passes it only to checks that declare it (the hallucination check grounds on memories too)."""
 
     name: str
 

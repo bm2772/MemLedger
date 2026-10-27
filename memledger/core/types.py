@@ -73,17 +73,29 @@ class Claim:
 
 
 @dataclass
+class FactSupport:
+    """One fact of a written memory and the context items that support it (slide 6: sources point to facts)."""
+
+    fact: str
+    parents: dict[str, float]  # parent id -> support score of this fact by that parent on its own
+    joint: bool = False  # no single parent supports it; the sources together do (a multi-source conclusion)
+
+
+@dataclass
 class Derivation:
     """A write event: which claim was produced, what the model saw, what supports it."""
 
     id: str
     claim_id: str
     exposed_to: list[str]  # every source/claim id in the context window (recorded by the service)
-    supported_by: dict[str, float]  # verifier-confirmed parent id -> support score
+    # verifier-confirmed parent id -> s (the write's support score, slide 7): the parents of at least one fact in
+    # `facts`. Without a verifier (baseline, provenance) every context item, since nothing can tell them apart.
+    supported_by: dict[str, float]
     model: str = ""
     prompt_hash: str = ""
     agent_id: str = ""
     created_at: datetime = field(default_factory=now)
+    facts: list[FactSupport] = field(default_factory=list)  # per-fact support; empty without a verifier
 
 
 @dataclass(frozen=True)
