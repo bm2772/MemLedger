@@ -2,6 +2,8 @@ from pathlib import Path
 
 import pytest
 
+from demo import chat
+
 st_testing = pytest.importorskip("streamlit.testing.v1")
 APP = str(Path(__file__).resolve().parents[2] / "demo" / "app.py")
 
@@ -16,23 +18,29 @@ def html(at) -> str:
     return " ".join(m.value for m in at.markdown)
 
 
-def test_off_then_on_shows_both_verdicts_in_one_chat():
+def type_as(at, who: str, text: str):
+    at.selectbox[0].set_value(who).run()
+    return at.chat_input[0].set_value(text).run()
+
+
+def test_same_prompts_get_through_off_and_are_stopped_on():
     at = st_testing.AppTest.from_file(APP, default_timeout=60).run()
-    assert not at.exception and at.chat_input[0].disabled
-    next(b for b in at.button if "Run" in b.label).click().run()
-    assert "Attack succeeded" in html(at) and "PROTECTION OFF" in html(at)
+    assert not at.exception
+    for who, text in chat.SCRIPT[0][1]:
+        type_as(at, who, text)
+    assert "Harmful action carried out" in html(at) and "account 9876" in html(at)
     at.toggle[0].set_value(True).run()
-    next(b for b in at.button if "Run" in b.label).click().run()
+    assert "Protection switched ON" in html(at)
+    for who, text in chat.SCRIPT[0][1]:
+        type_as(at, who, text)
     page = html(at)
-    assert not at.exception and "Attack blocked" in page and "PROTECTION ON" in page and "Attack succeeded" in page
+    assert not at.exception and "prevented by MemLedger" in page and "account 1234" in page
 
 
-def test_every_case_can_be_picked_and_the_chat_box_asks_the_agent():
+def test_insider_sql_and_reset():
     at = st_testing.AppTest.from_file(APP, default_timeout=60).run()
-    at.selectbox[0].set_value("leak").run()
-    next(b for b in at.button if "Run" in b.label).click().run()
-    assert "Team A&#x27;s confidential result was shown" in html(at) or "confidential result was shown" in html(at)
-    at.chat_input[0].set_value("What do you know about project Falcon?").run()
-    assert not at.exception and "93.1" in html(at)
-    next(b for b in at.button if b.label == "Clear chat").click().run()
-    assert "Attack succeeded" not in html(at)
+    for who, text in chat.SCRIPT[5][1]:
+        type_as(at, who, text)
+    assert not at.exception and "19% recall" in html(at) and "Harmful action carried out" in html(at)
+    next(b for b in at.button if b.label.startswith("Reset")).click().run()
+    assert "Harmful action carried out" not in html(at)
