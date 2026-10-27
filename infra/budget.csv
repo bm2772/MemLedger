@@ -9,3 +9,5 @@ date,member,instance,gpu,hours,usd,purpose,prompt_tokens,completion_tokens
 2026-10-26,M1,brev-massedcompute-L40,L40 48GB,0.20,0.21,final run 2 attempt 1: HF token not found ($HF_HOME moved; MODELS_FAILED),0,0
 2026-10-26,M1,brev-massedcompute-L40,L40 48GB,2.10,2.23,final run 2: dev ProtectAI vs Prompt Guard 2 + test split 2299/version x 5 versions,22700357,1185327
 2026-10-26,M1,brev-massedcompute-L40,L40 48GB,0.70,0.74,final run 2 latency (1 worker; Prompt Guard 2) (tokens not recorded),,
+2026-10-28,M4,memledger-demo,A6000,0.52,0.31,"demo: instance stuck deploying (hyperstack), deleted",0,0
+2026-10-28,M4,memledger-demo2,A6000,0.77,0.52,"demo: chat demo on Qwen3-8B + HF checkers, video recording",0,0
