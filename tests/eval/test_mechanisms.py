@@ -19,5 +19,7 @@ def test_oracle_needs_one_clean_justification():
 def test_conflict_pairs_and_scoring():
     pairs = conflict_pairs(40, 0)
     assert len(pairs) == 40 + len(FREE_TEXT) and {k for *_, k in pairs} >= {"conflict", "restatement"}
-    k = conflicts(40, 0)
+    from memledger.guards.text import lexical_nli
+
+    k = conflicts(40, 0, nli=lexical_nli)  # offline checker: CI has no torch/transformers
     assert k["recall"][1] == 10 and 0 <= k["f1"] <= 1
